@@ -703,6 +703,7 @@ async function checkStorage(force){
 /* ---------- 控え（バックアップ）の案内 ----------
    作業した日の夕方（16時以降）か、次の日に開いたとき、まだ控えを取っていなければ案内を出す */
 const inFrameNow = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
+let dlOK = false;   /* プレビュー画面でもファイル保存が使えるとき true */
 function backupInfo(){ try{ return JSON.parse(localStorage.getItem("houkoku-backup")||"{}"); }catch(e){ return {}; } }
 function setBackupInfo(o){ try{ localStorage.setItem("houkoku-backup", JSON.stringify(o)); }catch(e){} }
 function renderBackup(){
@@ -712,7 +713,7 @@ function renderBackup(){
   const now = new Date(), startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const changed = r && r.count>0 && r.updated > done;
   const due = changed && (now.getHours()>=16 || r.updated < startToday);
-  box.hidden = inFrameNow || !due || skip===today;
+  box.hidden = (inFrameNow && !dlOK) || !due || skip===today;
 }
 document.getElementById("backupAsk").addEventListener("click", e=>{
   const b = e.target.closest("button"); if (!b) return;
@@ -1005,13 +1006,34 @@ document.getElementById("addSlot").addEventListener("click", ()=>{
   document.getElementById("pl-"+p.id)?.focus();
 });
 
+/* ファイルを端末に保存する。プレビュー画面では、Claudeの「保存してよいか」の確認を通して保存する */
+let dlNS;
+function getDownloads(){
+  if (dlNS===undefined) dlNS = (window.claude && window.claude.use) ? window.claude.use("downloads").catch(()=>null) : Promise.resolve(null);
+  return dlNS;
+}
+async function saveFile(filename, blob){
+  if (inFrameNow){
+    const d = await getDownloads();
+    if (!d) throw {code:"unavailable"};
+    await d.save({filename, data:blob});
+    return;
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+}
 /* プレビュー画面（埋め込み表示）では保存・印刷が使えないので、ボタンにそう書いておく */
-if ((()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })()){
-  ["xlsxBtn","pdfBtn","exportBtn","exportTypes"].forEach(id=>{
-    const b = document.getElementById(id);
-    b.style.opacity = ".55"; b.title = "この画面では使えません。公開版・ダウンロード版で使えます。";
-    b.insertAdjacentHTML("beforeend", "<small style='display:block;font-size:10px;font-weight:400'>公開版で使えます</small>");
-  });
+function dimBtn(id){
+  const b = document.getElementById(id);
+  b.style.opacity = ".55"; b.title = "この画面では使えません。公開版・ダウンロード版で使えます。";
+  b.insertAdjacentHTML("beforeend", "<small style='display:block;font-size:10px;font-weight:400'>公開版で使えます</small>");
+}
+if (inFrameNow){
+  dimBtn("pdfBtn");
+  /* 書き出し系は、プレビュー画面でも保存できるときはそのまま使えるようにする */
+  getDownloads().then(d=>{ dlOK = !!d; if (!d) ["xlsxBtn","exportBtn","exportTypes"].forEach(dimBtn); renderBackup(); });
 }
 document.getElementById("clearBtn").addEventListener("click", ()=>{ startNew(); renderTemplates(); renderList(); renderPages(); });
 
@@ -1063,18 +1085,13 @@ document.getElementById("rlist").addEventListener("click", async e=>{
 });
 
 /* ---------- ファイルへの書き出し・読み込み ---------- */
-document.getElementById("exportBtn").addEventListener("click", ()=>{
+document.getElementById("exportBtn").addEventListener("click", async ()=>{
   const msg = document.getElementById("rmsg");
   if (state.sample){ msg.textContent = "見本のデータは書き出せません。報告書を作り始めてから押してください。"; return; }
-  const inFrame = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
-  if (inFrame){ msg.textContent = "この画面では書き出せません（ダウンロード版・公開版で動きます）。"; return; }
   const data = JSON.stringify({app:"houkoku", v:1, report:snapshot(), company:state.company});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));
   /* 日本語のファイル名は端末によって崩れるので英数字にする */
-  a.download = `houkoku_${state.info.date||"nodate"}_${state.rid}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  try{ await saveFile(`houkoku_${state.info.date||"nodate"}_${state.rid}.json`, new Blob([data], {type:"application/json"})); }
+  catch(e){ msg.textContent = e && e.code==="declined" ? "書き出しをやめました。" : "この画面では書き出せません（公開版で動きます）。"; return; }
   msg.textContent = "書き出しました（houkoku_日付_番号.json）。別の端末では「ファイルから読み込む」で続きを作れます。";
   const bk = backupInfo(); bk["r:"+state.rid] = Date.now(); setBackupInfo(bk); renderBackup();
 });
@@ -1097,17 +1114,13 @@ document.getElementById("importFile").addEventListener("change", async e=>{
 
 /* ---------- 作った型（取引先の様式・自分の型）の書き出し・読み込み ----------
    別の端末や社員に同じ型を渡すため。報告書の中身（写真など）は入らない */
-document.getElementById("exportTypes").addEventListener("click", ()=>{
+document.getElementById("exportTypes").addEventListener("click", async ()=>{
   const msg = document.getElementById("typeMsg");
   const myTypes = types.filter(t=>t.id!=="sample" || presets.some(x=>x.base==="c:sample"));
   if (!presets.length && !types.some(t=>t.id!=="sample")){ msg.textContent = "書き出す型がまだありません。「＋ 空のテンプレートから型を作る」か「＋ 取引先の様式から型を作る」で型を作ってから押してください。"; return; }
-  if (inFrameNow){ msg.textContent = "この画面では書き出せません（公開版で動きます）。"; return; }
   const data = JSON.stringify({app:"houkoku", kind:"types", v:1, types:myTypes, presets});
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));
-  a.download = `houkoku_kata_${new Date().toISOString().slice(0,10)}.json`;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  try{ await saveFile(`houkoku_kata_${new Date().toISOString().slice(0,10)}.json`, new Blob([data], {type:"application/json"})); }
+  catch(e){ msg.textContent = e && e.code==="declined" ? "書き出しをやめました。" : "この画面では書き出せません（公開版で動きます）。"; return; }
   const n = myTypes.filter(t=>t.id!=="sample").length + presets.length;
   msg.textContent = `型を${n}個、ファイルに書き出しました（houkoku_kata_日付.json）。使う端末で「型を読み込む」を押して、このファイルを選んでください。LINEやメール、Googleドライブで渡せます。`;
 });
@@ -1397,18 +1410,12 @@ async function buildXlsx(){
 }
 document.getElementById("xlsxBtn").addEventListener("click", async ()=>{
   const b = document.getElementById("xlsxBtn"), label = b.textContent;
-  const inFrame = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
-  if (inFrame){ b.textContent = "この画面では保存できません（ダウンロード版で動きます）"; setTimeout(()=>b.textContent = label, 4000); return; }
   b.textContent = "作成中…"; b.disabled = true;
   try{
     const buf = await buildXlsx();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
-    a.download = `houkoku_${state.info.date||"nodate"}.xlsx`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+    await saveFile(`houkoku_${state.info.date||"nodate"}.xlsx`, new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
     b.textContent = "保存しました";
-  }catch(e){ b.textContent = "作れませんでした。通信状況を確認してください"; }
+  }catch(e){ b.textContent = e && e.code==="declined" ? "保存をやめました" : e && e.code ? "この画面では保存できません（公開版で動きます）" : "作れませんでした。通信状況を確認してください"; }
   b.disabled = false; setTimeout(()=>b.textContent = label, 3000);
 });
 
