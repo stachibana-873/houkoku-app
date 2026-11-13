@@ -331,7 +331,7 @@ input.inplace{height:auto;min-height:100%}
       <div class="rlist" id="rlist" hidden></div>
       <div class="tplsub">
         <button class="btn small ghost" id="exportBtn" type="button">作成中の報告書をファイルに書き出す</button>
-        <label class="btn small ghost">ファイルから読み込む<input type="file" id="importFile" accept=".json,application/json" hidden></label>
+        <label class="btn small ghost">ファイルから読み込む<input type="file" id="importFile" hidden></label>
       </div>
       <p class="hint" id="rmsg">報告書は写真も含めてこの端末に自動保存されます。Chromeでのご利用をおすすめします。ホーム画面に追加しておくと、保存データが消えにくくなります。機種変更や別の端末で続きを作るときは、ファイルに書き出して読み込んでください。</p>
       <p class="storeinfo" id="storeInfo" hidden></p>
@@ -350,6 +350,11 @@ input.inplace{height:auto;min-height:100%}
         <button class="btn small ghost" id="newType" type="button">＋ 取引先の様式から型を作る</button>
         <button class="btn small ghost" id="editType" type="button" hidden>この型を編集</button>
       </div>
+      <div class="tplsub">
+        <button class="btn small ghost" id="exportTypes" type="button">作った型をファイルに書き出す</button>
+        <label class="btn small ghost">型を読み込む<input type="file" id="importTypes" hidden></label>
+      </div>
+      <p class="hint" id="typeMsg">パソコンで作った型をスマホで使うときや、社員に同じ型を配るときは、型をファイルに書き出して、使う端末の「型を読み込む」で開いてください。</p>
     </section>
 
     <section class="step">
@@ -1002,7 +1007,7 @@ document.getElementById("addSlot").addEventListener("click", ()=>{
 
 /* プレビュー画面（埋め込み表示）では保存・印刷が使えないので、ボタンにそう書いておく */
 if ((()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })()){
-  ["xlsxBtn","pdfBtn","exportBtn"].forEach(id=>{
+  ["xlsxBtn","pdfBtn","exportBtn","exportTypes"].forEach(id=>{
     const b = document.getElementById(id);
     b.style.opacity = ".55"; b.title = "この画面では使えません。公開版・ダウンロード版で使えます。";
     b.insertAdjacentHTML("beforeend", "<small style='display:block;font-size:10px;font-weight:400'>公開版で使えます</small>");
@@ -1078,6 +1083,7 @@ document.getElementById("importFile").addEventListener("change", async e=>{
   const msg = document.getElementById("rmsg");
   try{
     const d = JSON.parse(await f.text());
+    if (d.app==="houkoku" && d.kind==="types"){ await importTypeFile(d); msg.textContent = document.getElementById("typeMsg").textContent; return; }
     if (d.app!=="houkoku" || !d.report) throw 0;
     const id = String(Date.now());
     await dbPut("r:"+id, d.report);
@@ -1087,6 +1093,47 @@ document.getElementById("importFile").addEventListener("change", async e=>{
     await doSave();   /* 写真を1枚ずつの保存に分け直す */
     msg.textContent = "読み込みました。";
   }catch(err){ msg.textContent = "読み込めませんでした。このサイトで書き出したファイルを選んでください。"; }
+});
+
+/* ---------- 作った型（取引先の様式・自分の型）の書き出し・読み込み ----------
+   別の端末や社員に同じ型を渡すため。報告書の中身（写真など）は入らない */
+document.getElementById("exportTypes").addEventListener("click", ()=>{
+  const msg = document.getElementById("typeMsg");
+  const myTypes = types.filter(t=>t.id!=="sample" || presets.some(x=>x.base==="c:sample"));
+  if (!presets.length && !types.some(t=>t.id!=="sample")){ msg.textContent = "書き出す型がまだありません。「＋ 空のテンプレートから型を作る」か「＋ 取引先の様式から型を作る」で型を作ってから押してください。"; return; }
+  if (inFrameNow){ msg.textContent = "この画面では書き出せません（公開版で動きます）。"; return; }
+  const data = JSON.stringify({app:"houkoku", kind:"types", v:1, types:myTypes, presets});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([data], {type:"application/json"}));
+  a.download = `houkoku_kata_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+  const n = myTypes.filter(t=>t.id!=="sample").length + presets.length;
+  msg.textContent = `型を${n}個、ファイルに書き出しました（houkoku_kata_日付.json）。使う端末で「型を読み込む」を押して、このファイルを選んでください。LINEやメール、Googleドライブで渡せます。`;
+});
+/* 同じ型（同じ番号）がすでにあれば新しい内容に入れ替え、なければ追加する */
+async function importTypeFile(d){
+  const msg = document.getElementById("typeMsg");
+  const ts = Array.isArray(d.types) ? d.types.filter(t=>t && t.id && Array.isArray(t.pages)) : [];
+  const ps = Array.isArray(d.presets) ? d.presets.filter(x=>x && x.id && x.name) : [];
+  if (!ts.length && !ps.length) throw 0;
+  let added = 0, replaced = 0;
+  ts.forEach(t=>{ const i = types.findIndex(x=>x.id===t.id); if (i>=0){ types[i] = t; replaced++; } else { types.push(t); added++; } });
+  ps.forEach(x=>{ const i = presets.findIndex(y=>y.id===x.id); if (i>=0){ presets[i] = x; replaced++; } else { presets.push(x); added++; } });
+  await saveTypes(); await savePresets();
+  renderTemplates();
+  const names = [...ts.filter(t=>t.id!=="sample").map(t=>t.name), ...ps.map(x=>x.name)];
+  msg.textContent = `型を読み込みました（新しく${added}個${replaced?`、入れ替え${replaced}個`:""}）：${names.join("、")}。テンプレート一覧から選べます。`;
+}
+document.getElementById("importTypes").addEventListener("change", async e=>{
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  const msg = document.getElementById("typeMsg");
+  try{
+    const d = JSON.parse(await f.text());
+    if (d.app!=="houkoku") throw 0;
+    if (d.kind!=="types"){ msg.textContent = "これは報告書のファイルです。上の「保存した報告書」の「ファイルから読み込む」で開いてください。"; return; }
+    await importTypeFile(d);
+  }catch(err){ msg.textContent = "読み込めませんでした。このアプリの「作った型をファイルに書き出す」で作ったファイル（houkoku_kata_日付.json）を選んでください。"; }
 });
 
 /* ---------- プレビュー（A4） ---------- */
