@@ -394,7 +394,7 @@ input.inplace{height:auto;min-height:100%}
 
     <section class="step">
       <h2><span>4</span>作業チェック表 <small style="font-weight:400;color:var(--muted)">（使わなければ空のままでOK）</small></h2>
-      <label style="flex-direction:row;align-items:flex-start;gap:8px;color:var(--fg);font-size:13px"><input type="checkbox" id="f_link" style="margin-top:4px;flex:none"><span style="font-weight:700">写真とコメントと連動する<small style="color:var(--muted);display:block;font-weight:400">チェックの項目と写真の項目タイトル、備考と写真のコメントが同じになります。チェックの行を足すと写真の枠が増え、写真を足すとチェックの行が増えます。</small></span></label>
+      <label style="flex-direction:row;align-items:flex-start;gap:8px;color:var(--fg);font-size:13px"><input type="checkbox" id="f_link" style="margin-top:4px;flex:none"><span style="font-weight:700">写真とコメントと連動する<small style="color:var(--muted);display:block;font-weight:400">チェックの項目と写真の項目タイトル、報告事項と写真のコメント（報告事項）が同じになります。チェックの行を足すと写真の枠が増え、写真を足すとチェックの行が増えます。</small></span></label>
       <div class="plist" id="clist"></div>
       <button class="btn small ghost" id="addChk" type="button" style="align-self:flex-start">＋ 行を追加</button>
       <p class="hint">チェック表があると、1ページ目を表紙（現場情報とチェック表）にして、写真は2ページ目から並べます。</p>
@@ -926,7 +926,7 @@ function renderChecks(){
     <div class="crow" data-id="${c.id}">
       <input type="text" data-k="text" id="ct-${c.id}" value="${esc(c.text)}" placeholder="作業箇所・内容" aria-label="作業箇所・内容">
       <label class="done"><input type="checkbox" data-k="done" id="cd-${c.id}" ${c.done?"checked":""}>実施</label>
-      <input type="text" data-k="memo" id="cr-${c.id}" value="${esc(c.memo)}" placeholder="備考" aria-label="備考">
+      <input type="text" data-k="memo" id="cr-${c.id}" value="${esc(c.memo)}" placeholder="報告事項" aria-label="報告事項">
       <button type="button" class="iconbtn del" data-act="del" aria-label="この行を削除">×</button>
     </div>`).join("");
 }
@@ -1231,7 +1231,7 @@ const hasChecks = () => state.checks.some(c=>(c.text||"").trim() || c.done || c.
 function checkTable(){
   const done = state.checks.filter(c=>c.done).length;
   return `<table class="chk"><caption>作業チェック</caption>
-    <thead><tr><th>作業箇所・内容</th><th class="c">実施</th><th>備考</th></tr></thead>
+    <thead><tr><th>作業箇所・内容</th><th class="c">実施</th><th>報告事項</th></tr></thead>
     <tbody>${state.checks.map(c=>`<tr><td${E("check."+c.id+".text")}>${esc(c.text)||"&nbsp;"}</td><td class="c"${E("check."+c.id+".done")} style="cursor:pointer">${c.done?"✓":""}</td><td${E("check."+c.id+".memo")}>${esc(c.memo)}</td></tr>`).join("")}</tbody>
     <tfoot><tr><td>実施件数</td><td class="c" colspan="2" style="text-align:left">${done} / ${state.checks.length} 件</td></tr></tfoot></table>`;
 }
@@ -1421,7 +1421,7 @@ async function buildXlsx(mode){
   }
 
   function checkRows(ws, r){
-    cell(ws, `A${r}:D${r}`, "作業箇所・内容", {dark:true}); cell(ws, `E${r}`, "実施", {dark:true}); cell(ws, `F${r}:G${r}`, "備考", {dark:true}); r++;
+    cell(ws, `A${r}:D${r}`, "作業箇所・内容", {dark:true}); cell(ws, `E${r}`, "実施", {dark:true}); cell(ws, `F${r}:G${r}`, "報告事項", {dark:true}); r++;
     state.checks.forEach(c=>{ cell(ws, `A${r}:D${r}`, c.text, {align:"left"}); cell(ws, `E${r}`, c.done?"✓":""); cell(ws, `F${r}:G${r}`, c.memo, {align:"left"}); r++; });
     cell(ws, `A${r}:D${r}`, "実施件数", {font:{bold:true}}); cell(ws, `E${r}:G${r}`, `${state.checks.filter(c=>c.done).length} / ${state.checks.length} 件`, {align:"left"}); r++;
     return r;
