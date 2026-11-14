@@ -1771,11 +1771,11 @@ function curPage(){ return ed.type.pages[ed.page]; }
 function renderEditor(){
   const t = ed.type, pg = curPage();
   edEl("ed_tabs").innerHTML = t.pages.map((p,i)=>`<button type="button" data-p="${i}" aria-pressed="${i===ed.page}">${i+1}ページ目${i===t.repeat && t.pages.length>1 ? "（写真が多いとき繰り返す）" : ""}</button>`).join("")
-    + `<label class="btn small ghost">＋ 様式のページを追加<input type="file" id="ed_file" accept="image/*,application/pdf,.pdf" hidden></label>`
+    + `<label class="btn small ghost">＋ 様式のページを追加<input type="file" id="ed_file" accept="image/*,application/pdf,.pdf,.xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" hidden></label>`
     + (pg ? `<span class="ezoom"><button class="iconbtn" type="button" data-ed="zoomout" aria-label="縮小">−</button><span>${Math.round(ed.zoom*100)}%</span><button class="iconbtn" type="button" data-ed="zoomin" aria-label="拡大">＋</button></span>` : "");
   edEl("ed_chips").hidden = !pg;
   edEl("ed_stage").innerHTML = pg ? `<div class="epage ${ed.zoom>1?"zoomed":""} ${ed.zoom>=2?"z2":""}" id="ed_page" style="aspect-ratio:1/${pg.ratio};${ed.zoom>1?`width:${ed.zoom*100}%`:""}"><img class="cbg" src="${vurl(pg.bg)}" alt="">${pg.boxes.map(b=>boxHTML(b,null,true)).join("")}</div>`
-    : `<div class="eempty"><strong>まず取引先の様式を読み込みます</strong><br>PDF、スマホで撮った紙の写真、画像に対応しています。<br>Excelの様式は「PDFとして保存」してから読み込んでください。</div>`;
+    : `<div class="eempty"><strong>まず取引先の様式を読み込みます</strong><br>PDF、Excel（.xlsx）、スマホで撮った紙の写真、画像に対応しています。</div>`;
   if (pg && ed.sel) edEl("ed_page").querySelector(`[data-id="${ed.sel}"]`)?.classList.add("sel");
   const b = pg && pg.boxes.find(b=>b.id===ed.sel);
   edEl("ed_prop").hidden = !b;
@@ -1948,8 +1948,184 @@ function findEmptyCells(canvas, textRects, boxes){
   return cells.filter(c=>!textRects.some(r=>overlap(c, r) > r.w*r.h*0.3) && !boxes.some(b=>overlap(c, b) > Math.min(c.w*c.h, b.w*b.h)*0.3))
     .map(c=>({x:c.x+0.3, y:c.y+0.15, w:c.w-0.6, h:c.h-0.3}));
 }
+/* ---------- Excelの様式を読み込む ----------
+   Excelのセル（幅・高さ・結合・罫線・塗り・文字）を絵に描き直して様式の背景にし、
+   文字の位置はPDFと同じ仕組み（detectBoxes）に渡して、□や記入欄に枠を自動で置く */
+const isXlsx = f => /\.xlsx$/i.test(f.name) || f.type==="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const isOldXls = f => /\.xls$/i.test(f.name) || f.type==="application/vnd.ms-excel";
+function xlColor(c, def){
+  if (!c) return def;
+  if (c.argb && /^[0-9A-F]{8}$/i.test(c.argb)) return "#"+c.argb.slice(2);
+  if (c.indexed===64 || c.theme!==undefined) return def;   /* テーマ色は細かく再現しない */
+  return def;
+}
+/* セルの文字（結合セルなどで取り出せないときは空） */
+function cellText(cell){ try{ const t = cell.text; return t==null ? "" : String(t); }catch(e){ return ""; } }
+function parseRef(ref){
+  const m = /^\$?([A-Z]+)\$?(\d+)$/.exec(String(ref).trim().toUpperCase()); if (!m) return null;
+  let c = 0; for (const ch of m[1]) c = c*26 + (ch.charCodeAt(0)-64);
+  return {c, r:+m[2]};
+}
+function parseRange(a){
+  const [p,q] = String(a).split("!").pop().split(":"); const s = parseRef(p), e = parseRef(q||p);
+  return s && e ? {r1:Math.min(s.r,e.r), c1:Math.min(s.c,e.c), r2:Math.max(s.r,e.r), c2:Math.max(s.c,e.c)} : null;
+}
+async function xlsxToPages(file){
+  if (!window.ExcelJS) await loadLib("vendor/exceljs.min.js", "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(await file.arrayBuffer());
+  const pages = [];
+  for (const ws of wb.worksheets){
+    if (pages.length >= 4) break;
+    if (ws.state && ws.state !== "visible") continue;
+    const pg = sheetToPages(ws, wb);
+    for (const p of pg.slice(0, 4 - pages.length)){
+      const x = p.canvas.getContext("2d");
+      for (const im of p.imgs){
+        try{
+          const blob = new Blob([im.media.buffer], {type:"image/"+(im.media.extension==="jpg"?"jpeg":im.media.extension)});
+          const bmp = await createImageBitmap(blob);
+          x.drawImage(bmp, im.x, im.y, im.w, im.h);
+        }catch(e){}
+      }
+      /* 写真やロゴの中の白い部分を「空いたマス」と間違えないよう、画像の上の枠は外す */
+      const W = p.canvas.width, H = p.canvas.height;
+      const inImg = b => p.imgs.some(im=>{ const cx = (b.x + b.w/2)/100*W, cy = (b.y + b.h/2)/100*H; return cx > im.x && cx < im.x+im.w && cy > im.y && cy < im.y+im.h; });
+      const boxes = detectBoxes({items:p.items}, p.vp, p.canvas).filter(b=>!inImg(b));
+      pages.push({bg:p.canvas.toDataURL("image/jpeg",.85), ratio:p.canvas.height/p.canvas.width, boxes});
+    }
+  }
+  if (!pages.length) throw new Error("empty");
+  return pages;
+}
+function sheetToPages(ws, wb){
+  /* 範囲：印刷範囲があればそれ、なければ文字・罫線・塗りのあるセルの範囲 */
+  let area = ws.pageSetup && ws.pageSetup.printArea ? parseRange(ws.pageSetup.printArea.split(",")[0]) : null;
+  if (!area){
+    let r1=1e9,c1=1e9,r2=0,c2=0;
+    ws.eachRow({includeEmpty:false}, (row, r)=>row.eachCell({includeEmpty:true}, (cell, c)=>{
+      const b = cell.border||{}, has = cellText(cell).trim() || b.top || b.bottom || b.left || b.right || (cell.fill && cell.fill.type==="pattern" && cell.fill.pattern==="solid");
+      if (has){ r1=Math.min(r1,r); c1=Math.min(c1,c); r2=Math.max(r2,r); c2=Math.max(c2,c); }
+    }));
+    (ws.model.merges||[]).forEach(m=>{ const g = parseRange(m); if (g && r2){ r2=Math.max(r2,g.r2); c2=Math.max(c2,g.c2); } });
+    if (!r2) return [];
+    area = {r1:Math.min(r1,1), c1:Math.min(c1,1), r2, c2};
+    area.r1 = r1; area.c1 = c1;
+  }
+  const P = 96/72, defW = ws.properties.defaultColWidth || 8.43, defH = ws.properties.defaultRowHeight || 15;
+  const colX = [0], rowY = [0];
+  for (let c=area.c1; c<=area.c2; c++){ const col = ws.getColumn(c); const w = col.hidden ? 0 : Math.round((col.width || defW)*7 + 5); colX.push(colX[colX.length-1] + w); }
+  for (let r=area.r1; r<=area.r2; r++){ const row = ws.getRow(r); const h = row.hidden ? 0 : (row.height || defH)*P; rowY.push(rowY[rowY.length-1] + h); }
+  const X = c => colX[c-area.c1], Y = r => rowY[r-area.r1];
+  const W0 = colX[colX.length-1], H0 = rowY[rowY.length-1];
+  if (!W0 || !H0) return [];
+  /* 結合セル */
+  const master = new Map(), slave = new Set();
+  (ws.model.merges||[]).forEach(m=>{
+    const g = parseRange(m); if (!g) return;
+    master.set(g.r1+":"+g.c1, g);
+    for (let r=g.r1; r<=g.r2; r++) for (let c=g.c1; c<=g.c2; c++) if (r!==g.r1 || c!==g.c1) slave.add(r+":"+c);
+  });
+  /* A4縦の紙に、左右5%の余白をとって幅いっぱいに置く。縦に長い表はA4の高さごとにページを分ける */
+  const CW = 1400, M = CW*0.05, s = (CW - M*2) / W0, PH = Math.round(CW*297/210);
+  const usable = PH - M*2;
+  const breaks = [area.r1];   /* ページの最初の行 */
+  for (let r=area.r1; r<=area.r2; r++){ if ((Y(r+1) - Y(breaks[breaks.length-1]))*s > usable && r > breaks[breaks.length-1]) breaks.push(r); }
+  const mctx = document.createElement("canvas").getContext("2d");
+  const pages = [];
+  breaks.forEach((rs, bi)=>{
+    const re = (breaks[bi+1] || area.r2+1) - 1, oy = Y(rs);
+    const c = document.createElement("canvas"); c.width = CW; c.height = PH;
+    const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0,0,CW,PH);
+    const items = [];
+    const cellRect = (r, cc)=>{
+      const g = master.get(r+":"+cc);
+      const r2 = g ? Math.min(g.r2, re) : r, c2 = g ? Math.min(g.c2, area.c2) : cc;
+      return {x:M + X(cc)*s, y:M + (Y(r)-oy)*s, w:(X(c2+1)-X(cc))*s, h:(Y(r2+1)-Y(r))*s};
+    };
+    /* 1. 塗り */
+    for (let r=rs; r<=re; r++) for (let cc=area.c1; cc<=area.c2; cc++){
+      if (slave.has(r+":"+cc)) continue;
+      const cell = ws.getCell(r, cc), f = cell.fill;
+      if (f && f.type==="pattern" && f.pattern==="solid"){ const col = xlColor(f.fgColor, null); if (col && !/^#?F{6}$/i.test(col)){ const R = cellRect(r,cc); x.fillStyle = col; x.fillRect(R.x, R.y, R.w, R.h); } }
+    }
+    /* 2. 罫線（結合セルは外側だけ） */
+    const lw = st => st==="thick" ? 3 : (st==="medium"||st==="mediumDashed"||st==="double") ? 2 : st==="hair" ? 0.6 : 1.2;
+    const line = (x1,y1,x2,y2,b)=>{ if (!b || !b.style) return; x.strokeStyle = xlColor(b.color, "#000"); x.lineWidth = lw(b.style);
+      x.setLineDash(/dash|dot/i.test(b.style) ? [4,3] : []); x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke(); };
+    for (let r=rs; r<=re; r++) for (let cc=area.c1; cc<=area.c2; cc++){
+      if (slave.has(r+":"+cc)){
+        /* 結合の内側のセルは、結合範囲の外周に面している辺だけ描く */
+        continue;
+      }
+      const g = master.get(r+":"+cc), R = cellRect(r,cc);
+      const bTop = ws.getCell(r,cc).border||{};
+      if (!g){ line(R.x,R.y,R.x+R.w,R.y,bTop.top); line(R.x,R.y+R.h,R.x+R.w,R.y+R.h,bTop.bottom); line(R.x,R.y,R.x,R.y+R.h,bTop.left); line(R.x+R.w,R.y,R.x+R.w,R.y+R.h,bTop.right); continue; }
+      const r2 = Math.min(g.r2, re);
+      for (let k=g.c1; k<=g.c2; k++){ const xa = M+X(k)*s, xb = M+X(k+1)*s;
+        line(xa, R.y, xb, R.y, (ws.getCell(g.r1,k).border||{}).top);
+        line(xa, R.y+R.h, xb, R.y+R.h, (ws.getCell(r2,k).border||{}).bottom); }
+      for (let k=r; k<=r2; k++){ const ya = M+(Y(k)-oy)*s, yb = M+(Y(k+1)-oy)*s;
+        line(R.x, ya, R.x, yb, (ws.getCell(k,g.c1).border||{}).left);
+        line(R.x+R.w, ya, R.x+R.w, yb, (ws.getCell(k,g.c2).border||{}).right); }
+    }
+    x.setLineDash([]);
+    /* 3. 文字 */
+    for (let r=rs; r<=re; r++) for (let cc=area.c1; cc<=area.c2; cc++){
+      if (slave.has(r+":"+cc)) continue;
+      const cell = ws.getCell(r, cc);
+      const t = cellText(cell); if (!t.trim()) continue;
+      const R = cellRect(r,cc); if (R.w <= 0 || R.h <= 0) continue;
+      const fnt = cell.font || {}, al = cell.alignment || {};
+      const fs = Math.max(6, (fnt.size || 11) * P * s);
+      x.font = `${fnt.bold ? "700 " : ""}${fs}px "BIZ UDPGothic","Hiragino Sans","Yu Gothic","Meiryo",sans-serif`;
+      mctx.font = x.font;
+      /* 折り返し */
+      let lines = t.split(/\r?\n/);
+      if (al.wrapText){
+        const out = [];
+        lines.forEach(L=>{ let cur = ""; for (const ch of L){ if (x.measureText(cur+ch).width > R.w - 6 && cur){ out.push(cur); cur = ch; } else cur += ch; } out.push(cur); });
+        lines = out;
+      }
+      const lh = fs*1.25, total = lh*lines.length;
+      const v = al.vertical || "bottom";
+      let ty = v==="top" ? R.y + 2 : v==="middle"||v==="center" ? R.y + (R.h - total)/2 : R.y + R.h - total - 2;
+      x.fillStyle = xlColor(fnt.color, "#111");
+      x.save(); x.beginPath(); x.rect(R.x, R.y, Math.max(R.w, W0*s), R.h); x.clip();
+      lines.forEach(L=>{
+        const tw = x.measureText(L).width;
+        const hz = al.horizontal || (typeof cell.value==="number" ? "right" : "left");
+        const tx = hz==="center"||hz==="centerContinuous" ? R.x + (R.w - tw)/2 : hz==="right" ? R.x + R.w - tw - 3 : R.x + 3 + (al.indent||0)*fs;
+        x.textBaseline = "alphabetic"; x.fillText(L, tx, ty + fs*0.88);
+        if (L.trim()) items.push({str:L, transform:[fs,0,0,fs,tx,ty + fs*0.88], width:tw});
+        ty += lh;
+      });
+      x.restore();
+    }
+    /* 4. 画像（ロゴなど）の置き場所を覚えておく（読み込みに時間がかかるので後で描く） */
+    const imgs = [];
+    try{
+      const fx = (col)=>{ const i = Math.floor(col)+1, fr = col - Math.floor(col); if (i < area.c1 || i > area.c2) return null; return M + (X(i) + fr*(X(i+1)-X(i)))*s; };
+      const fy = (row)=>{ const i = Math.floor(row)+1, fr = row - Math.floor(row); if (i < rs || i > re+1) return null; return M + (Y(i) - oy + fr*((Y(i+1)||Y(i))-Y(i)))*s; };
+      (ws.getImages ? ws.getImages() : []).forEach(im=>{
+        const media = wb.getImage(+im.imageId), tl = im.range && im.range.tl; if (!media || !tl) return;
+        const x1 = fx(tl.col), y1 = fy(tl.row); if (x1===null || y1===null) return;
+        let x2, y2;
+        if (im.range.br){ x2 = fx(im.range.br.col); y2 = fy(im.range.br.row); }
+        if ((x2==null || y2==null) && im.range.ext){ x2 = x1 + im.range.ext.width*s; y2 = y1 + im.range.ext.height*s; }
+        if (x2==null || y2==null) return;
+        imgs.push({media, x:x1, y:y1, w:x2-x1, h:y2-y1});
+      });
+    }catch(e){}
+    const vp = {width:CW, height:PH, convertToViewportPoint:(a,b)=>[a,b]};
+    pages.push({canvas:c, items, vp, imgs});
+  });
+  return pages;
+}
 async function fileToPages(file){
-  if (file.type === "application/pdf"){
+  if (isXlsx(file)) return xlsxToPages(file);
+  if (isOldXls(file)) throw {msg:"古い形式のExcel（.xls）は読み込めません。Excelで開いて「名前を付けて保存」→「Excelブック（.xlsx）」で保存し直してから選んでください。"};
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)){
     if (!window.pdfjsLib){
       await loadLib("vendor/pdf.worker.min.js", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js");
       await loadLib("vendor/pdf.min.js", "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
@@ -1983,7 +2159,7 @@ edEl("editor").addEventListener("change", async e=>{
         ? `様式の文字を読み取って、枠を${found}個自動で置きました（緑＝チェック欄、青＝入力欄）。ずれている枠はドラッグで直してください。写真欄がない様式は、写真ページが後ろに自動で付きます。` + (matchMedia("(max-width:760px)").matches ? "スマホでは右上の＋で拡大し、枠を1回タップして選んでから動かしてください。" : "")
         : "文字を読み取れなかったので、ボタンから枠を置いてください（紙を撮った写真はこちらになります）。写真欄を置かなければ、写真ページが後ろに自動で付きます。";
       edEl("ed_side").classList.add("closed"); edEl("ed_sidetoggle").textContent = "▼ 枠を追加する・ページの設定";
-    }catch(err){ edEl("ed_msg").textContent = "読み込めませんでした。PDFか画像のファイルを選んでください。"; }
+    }catch(err){ edEl("ed_msg").textContent = err && err.msg ? err.msg : "読み込めませんでした。PDF・Excel（.xlsx）・画像のファイルを選んでください。"; }
     renderEditor();
   }
   if (e.target.id==="ed_bname"){ curPage().boxes.find(b=>b.id===ed.sel).name = e.target.value; renderEditor(); }
