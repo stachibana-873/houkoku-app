@@ -1,7 +1,7 @@
 /* 電波がない現場でもアプリを開けるようにするための仕組み（Service Worker）。
    アプリ本体と部品を端末に取っておき、つながらないときはそれを使う。
    アプリを更新したら VERSION を変える */
-const VERSION = "houkoku-v15";
+const VERSION = "houkoku-v16";
 const CORE = ["./", "index.html", "manual.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
   "vendor/exceljs.min.js", "vendor/pdf.min.js", "vendor/pdf.worker.min.js"];
 self.addEventListener("install", e=>{

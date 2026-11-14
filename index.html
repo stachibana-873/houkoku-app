@@ -1243,9 +1243,10 @@ const hasChecks = () => state.checks.some(c=>(c.text||"").trim() || c.done || c.
 function checkTable(){
   const done = state.checks.filter(c=>c.done).length;
   return `<table class="chk"><caption>作業チェック</caption>
+    <colgroup><col style="width:28%"><col style="width:9cqw"><col></colgroup>
     <thead><tr><th>作業箇所・内容</th><th class="c">実施</th><th>報告事項</th></tr></thead>
     <tbody>${state.checks.map(c=>`<tr><td${E("check."+c.id+".text")}>${esc(c.text)||"&nbsp;"}</td><td class="c"${E("check."+c.id+".done")} style="cursor:pointer">${c.done?"✓":""}</td><td${E("check."+c.id+".memo")}>${esc(c.memo)}</td></tr>`).join("")}</tbody>
-    <tfoot><tr><td>実施件数</td><td class="c" colspan="2" style="text-align:left">${done} / ${state.checks.length} 件</td></tr></tfoot></table>`;
+    <tfoot><tr><td>実施件数</td><td class="c" colspan="2" style="text-align:left">${done} / ${state.checks.filter(c=>(c.text||"").trim() || c.done || c.memo).length} 件</td></tr></tfoot></table>`;
 }
 function listHead(info){
   const co = state.company;
@@ -1279,11 +1280,11 @@ function blankPhotoPage(info){
 }
 /* 一覧表＋4枚：1ページ目（足りなければ続きのページ）に一覧表、その後に写真4枚ずつ */
 function renderListPages(info){
-  const ph = state.photos, pages = [];
+  const ph = state.photos, pages = [], chk = hasChecks();
   const rowsOf = p => `<tr><td${E("photo."+p.id+".place")}>${esc(p.place)||"&nbsp;"}</td><td${E("photo."+p.id+".comment")}>${esc(p.comment)}</td></tr>`;
   const firstMax = 30, nextMax = 44;
   const chunks = [];
-  for (let i=0; i<ph.length || i===0; ){
+  for (let i=0; (!chk && i<ph.length) || i===0; ){
     const n = chunks.length ? nextMax : firstMax;
     chunks.push(ph.slice(i, i+n)); i += n;
     if (i >= ph.length) break;
@@ -1293,9 +1294,8 @@ function renderListPages(info){
     pages.push(`
       ${k===0 ? `<h2 class="title" style="letter-spacing:.3em"${E("info.title")}>${esc(info.title)||"作業報告書"}</h2>` : ""}
       ${listHead(info)}
-      <table class="lt items"><colgroup><col style="width:32%"><col></colgroup>
-        <tr><th>対象箇所</th><th>報告事項</th></tr>${c.map(rowsOf).join("")}${last ? `<tr><td${E("newrow.place")}>&nbsp;</td><td${E("newrow.comment")}></td></tr>`.repeat(c.length ? 1 : 6) : ""}</table>
-      ${last && state.checks.length ? checkTable() : ""}
+      ${chk ? checkTable() : `<table class="lt items"><colgroup><col style="width:32%"><col></colgroup>
+        <tr><th>対象箇所</th><th>報告事項</th></tr>${c.map(rowsOf).join("")}${last ? `<tr><td${E("newrow.place")}>&nbsp;</td><td${E("newrow.comment")}></td></tr>`.repeat(c.length ? 1 : 6) : ""}</table>`}
       ${last ? `<table class="lt"><tr><th>作業後の特記事項</th></tr></table><div class="after-note" style="margin-top:-2.4cqw"${E("info.note")}>${esc(info.note)}</div>` : ""}
       <div style="flex:1"></div>`);
   });
@@ -1434,10 +1434,16 @@ async function buildXlsx(mode){
     if (mode !== "both") detail = ph.slice(Math.min(lay.used, ph.length));
   }
 
+  /* 文字の量に合わせた行の高さ（perLine＝1行に入るおおよその文字数） */
+  function textRowH(t, perLine){ const n = String(t||"").split("\n").reduce((a,l)=>a + Math.max(1, Math.ceil(l.length/perLine)), 0); return Math.max(ROWH, n*16 + 6); }
   function checkRows(ws, r){
-    cell(ws, `A${r}:D${r}`, "作業箇所・内容", {dark:true}); cell(ws, `E${r}`, "実施", {dark:true}); cell(ws, `F${r}:G${r}`, "報告事項", {dark:true}); r++;
-    state.checks.forEach(c=>{ cell(ws, `A${r}:D${r}`, c.text, {align:"left"}); cell(ws, `E${r}`, c.done?"✓":""); cell(ws, `F${r}:G${r}`, c.memo, {align:"left"}); r++; });
-    cell(ws, `A${r}:D${r}`, "実施件数", {font:{bold:true}}); cell(ws, `E${r}:G${r}`, `${state.checks.filter(c=>c.done).length} / ${state.checks.length} 件`, {align:"left"}); r++;
+    cell(ws, `A${r}:B${r}`, "作業箇所・内容", {dark:true}); cell(ws, `C${r}`, "実施", {dark:true}); cell(ws, `D${r}:G${r}`, "報告事項", {dark:true}); r++;
+    state.checks.filter(c=>(c.text||"").trim() || c.done || c.memo).forEach(c=>{
+      cell(ws, `A${r}:B${r}`, c.text, {align:"left"}); cell(ws, `C${r}`, c.done?"✓":""); cell(ws, `D${r}:G${r}`, c.memo, {align:"left"});
+      ws.getRow(r).height = Math.max(textRowH(c.memo, 20), textRowH(c.text, 9)); r++;
+    });
+    const n = state.checks.filter(c=>(c.text||"").trim() || c.done || c.memo).length;
+    cell(ws, `A${r}:B${r}`, "実施件数", {font:{bold:true}}); cell(ws, `C${r}:G${r}`, `${state.checks.filter(c=>c.done).length} / ${n} 件`, {align:"left"}); r++;
     return r;
   }
   /* 様式だけを出すときも、作業チェック表を使っていればシートを1枚付ける */
@@ -1451,13 +1457,15 @@ async function buildXlsx(mode){
   cell(ws, "A1:G1", info.title || "作業報告書", {border:false, font:{size:16, bold:true}});
   ws.getRow(1).height = 30;
   let r = header(ws, 2);
+  /* 作業チェック表を使っているときは、同じ内容になる「対象箇所／報告事項」の表は出さず、チェック表だけにする */
+  if (hasChecks()) r = checkRows(ws, r);
+  else {
   cell(ws, `A${r}:C${r}`, "対象箇所", {dark:true}); cell(ws, `D${r}:G${r}`, "報告事項", {dark:true}); r++;
   ph.forEach(p=>{
     cell(ws, `A${r}:C${r}`, p.place); cell(ws, `D${r}:G${r}`, p.comment, {align:"left"});
-    const lines = Math.max(1, ...String(p.comment||"").split("\n").map(l=>Math.ceil(l.length/22)));
-    ws.getRow(r).height = Math.max(ROWH, lines*15); r++;
+    ws.getRow(r).height = textRowH(p.comment, 20); r++;
   });
-  if (state.checks.length){ r++; r = checkRows(ws, r); }
+  }
   r++;
   cell(ws, `A${r}:G${r}`, "作業後の特記事項", {dark:true}); r++;
   const nc = cell(ws, `A${r}:G${r+4}`, info.note, {align:"left"}); nc.alignment = {...nc.alignment, vertical:"top"};
