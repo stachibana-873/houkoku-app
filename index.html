@@ -485,6 +485,8 @@ input.inplace{height:auto;min-height:100%}
   <div class="ebar">
     <strong>型を作る</strong>
     <input type="text" id="ed_name" placeholder="型の名前（例：〇〇不動産用）" aria-label="型の名前">
+    <button class="btn small ghost" type="button" data-ed="undo" id="ed_undo" title="直前の操作を取り消す（消した枠も戻ります）" disabled>↶ 元に戻す</button>
+    <button class="btn small ghost" type="button" data-ed="redo" id="ed_redo" title="取り消した操作をやり直す" disabled>↷ やり直す</button>
     <button class="btn small ghost" type="button" data-ed="cancel">やめる</button>
     <button class="btn small" type="button" data-ed="save">保存して使う</button>
   </div>
@@ -501,11 +503,11 @@ input.inplace{height:auto;min-height:100%}
           <button class="iconbtn" type="button" data-ed="mvL" aria-label="左へ">←</button><button class="iconbtn" type="button" data-ed="mvU" aria-label="上へ">↑</button><button class="iconbtn" type="button" data-ed="mvD" aria-label="下へ">↓</button><button class="iconbtn" type="button" data-ed="mvR" aria-label="右へ">→</button>
           <button class="iconbtn" type="button" data-ed="wM" aria-label="幅を狭く">幅−</button><button class="iconbtn" type="button" data-ed="wP" aria-label="幅を広く">幅＋</button><button class="iconbtn" type="button" data-ed="hM" aria-label="高さを低く">高−</button><button class="iconbtn" type="button" data-ed="hP" aria-label="高さを高く">高＋</button>
         </div>
-        <details class="pmore" id="ed_pmore"><summary>名前・文字の大きさ・削除</summary>
+        <button class="btn small ghost" type="button" data-ed="boxdel" style="color:var(--danger);border-color:var(--danger);width:100%">🗑 この枠を消す</button>
+        <details class="pmore" id="ed_pmore"><summary>名前・文字の大きさ</summary>
           <label id="ed_bnamewrap">入力画面に出す名前<input type="text" id="ed_bname"></label>
           <div class="row" id="ed_slot"><span class="hint">番号</span><button class="iconbtn" type="button" data-ed="slotdown" aria-label="番号を減らす">−</button><button class="iconbtn" type="button" data-ed="slotup" aria-label="番号を増やす">＋</button></div>
           <select id="ed_size" aria-label="文字の大きさ"><option value="s">文字：小</option><option value="m">文字：中</option><option value="l">文字：大</option></select>
-          <button class="btn small ghost" type="button" data-ed="boxdel" style="color:var(--danger);border-color:var(--danger)">この枠を消す</button>
         </details>
       </div>
       <label id="ed_repeatwrap" hidden>写真が多いときに繰り返すページ<select id="ed_repeat"></select></label>
@@ -1954,17 +1956,40 @@ document.getElementById("pages").addEventListener("click", e=>{
 });
 
 /* --- 型エディタ --- */
-const ed = {type:null, page:0, sel:null, zoom:1};
+const ed = {type:null, page:0, sel:null, zoom:1, hist:[], hi:-1};
 const edEl = id => document.getElementById(id);
 function openEditor(t){
   ed.type = JSON.parse(JSON.stringify(t || {id:String(Date.now()), name:"", pages:[], repeat:0}));
-  ed.page = 0; ed.sel = null; ed.zoom = 1;
+  ed.page = 0; ed.sel = null; ed.zoom = 1; ed.hist = []; ed.hi = -1;
   /* スマホでは、様式を広く見られるよう設定の欄を最初は閉じておく（まだ様式がないときは開く） */
   edEl("ed_side").classList.toggle("closed", !!(t && t.pages.length));
   edEl("ed_name").value = ed.type.name;
   edEl("editor").hidden = false; document.body.style.overflow = "hidden";
   edEl("ed_del").hidden = !t || t.id==="sample";
   renderEditor();
+}
+/* 元に戻す・やり直す：枠を置く・動かす・消す・ページを消すたびに、その時点の様子を覚えておく */
+function edKey(){ return JSON.stringify([ed.type.repeat, ed.type.pages.map(p=>[p.bg.length, p.ratio, p.boxes])]); }
+function edRecord(){
+  clearTimeout(ed.ht);
+  if (!ed.type) return;
+  const k = edKey();
+  if (!ed.hist[ed.hi] || ed.hist[ed.hi].k !== k){
+    ed.hist.length = ed.hi + 1;
+    ed.hist.push({k, repeat:ed.type.repeat, pages:ed.type.pages.map(p=>({...p, boxes:JSON.parse(JSON.stringify(p.boxes))}))});
+    if (ed.hist.length > 60) ed.hist.shift();
+    ed.hi = ed.hist.length - 1;
+  }
+  edEl("ed_undo").disabled = ed.hi <= 0; edEl("ed_redo").disabled = ed.hi >= ed.hist.length - 1;
+}
+function edStep(d){
+  edRecord();
+  const h = ed.hist[ed.hi + d]; if (!h) return;
+  ed.hi += d;
+  ed.type.pages = h.pages.map(p=>({...p, boxes:JSON.parse(JSON.stringify(p.boxes))})); ed.type.repeat = h.repeat;
+  ed.page = Math.min(ed.page, Math.max(0, ed.type.pages.length-1)); ed.sel = null;
+  renderEditor(); edRecord();
+  edEl("ed_msg").textContent = d < 0 ? "1つ前の状態に戻しました。" : "やり直しました。";
 }
 function closeEditor(){ edEl("editor").hidden = true; document.body.style.overflow = ""; }
 function curPage(){ return ed.type.pages[ed.page]; }
@@ -1995,6 +2020,7 @@ function renderEditor(){
   }
   edEl("ed_repeatwrap").hidden = t.pages.length < 2;
   edEl("ed_repeat").innerHTML = t.pages.map((p,i)=>`<option value="${i}" ${i===t.repeat?"selected":""}>${i+1}ページ目</option>`).join("");
+  clearTimeout(ed.ht); ed.ht = setTimeout(edRecord, ed.hist && ed.hist.length ? 300 : 0);
 }
 /* PDFの文字の位置を読んで、枠を自動で置く（ExcelやWordから作ったPDF向け。紙を撮った写真には文字情報がないので手で置く）
    「□〇〇」→ チェック欄、「物件名」「報告日」など → その右に入力欄、「気付いた点」「備考」など → その下に記入欄 */
@@ -2782,6 +2808,8 @@ edEl("editor").addEventListener("click", e=>{
     return;
   }
   if (act==="unsel"){ ed.sel = null; renderEditor(); return; }
+  if (act==="undo"){ edStep(-1); return; }
+  if (act==="redo"){ edStep(1); return; }
   if (b && /^(mv[LURD]|[wh][MP])$/.test(act||"")){
     const step = 0.4;
     if (act==="mvL") b.x = Math.max(0, b.x-step);
@@ -2796,8 +2824,8 @@ edEl("editor").addEventListener("click", e=>{
   }
   if (act==="slotup" && b){ b.n++; renderEditor(); }
   if (act==="slotdown" && b && b.n>1){ b.n--; renderEditor(); }
-  if (act==="boxdel" && b){ pg.boxes = pg.boxes.filter(x=>x!==b); ed.sel = null; renderEditor(); }
-  if (act==="pagedel" && pg){ ed.type.pages.splice(ed.page,1); ed.page = 0; ed.type.repeat = Math.min(ed.type.repeat, Math.max(0,ed.type.pages.length-1)); renderEditor(); }
+  if (act==="boxdel" && b){ edRecord(); pg.boxes = pg.boxes.filter(x=>x!==b); ed.sel = null; renderEditor(); edEl("ed_msg").textContent = "枠を消しました。間違えたときは上の「元に戻す」で戻せます。"; }
+  if (act==="pagedel" && pg){ edRecord(); ed.type.pages.splice(ed.page,1); ed.page = 0; ed.type.repeat = Math.min(ed.type.repeat, Math.max(0,ed.type.pages.length-1)); renderEditor(); }
   if (act==="cancel") closeEditor();
   if (act==="save"){
     const t = ed.type;
@@ -2840,6 +2868,14 @@ edEl("ed_stage").addEventListener("pointerdown", e=>{
   };
   const up = ()=>{ removeEventListener("pointermove", move); removeEventListener("pointerup", up); renderEditor(); };
   addEventListener("pointermove", move); addEventListener("pointerup", up);
+});
+/* キーボード：Delete で選んだ枠を消す、Ctrl+Z で元に戻す、Ctrl+Y（Ctrl+Shift+Z）でやり直す */
+addEventListener("keydown", e=>{
+  if (edEl("editor").hidden || /^(INPUT|TEXTAREA|SELECT)$/.test((e.target.tagName||""))) return;
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+  if (mod && k==="z"){ e.preventDefault(); edStep(e.shiftKey ? 1 : -1); }
+  else if (mod && k==="y"){ e.preventDefault(); edStep(1); }
+  else if ((e.key==="Delete" || e.key==="Backspace") && ed.sel){ e.preventDefault(); edEl("editor").querySelector('[data-ed="boxdel"]').click(); }
 });
 edEl("ed_chips").innerHTML = Object.entries(CFIELD_DEFS).map(([f,d])=>`<button type="button" class="chip ${d.slot?"slot":""}" data-f="${f}">＋${d.label}</button>`).join("");
 document.getElementById("newType").addEventListener("click", ()=>openEditor(null));
