@@ -319,7 +319,7 @@ input.inplace{height:auto;min-height:100%}
 <header class="top">
   <div>
     <h1>写真報告書メーカー</h1>
-    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 20</small></p>
+    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 21</small></p>
   </div>
   <div class="tplsub">
     <a class="btn ghost" id="manualLink" href="manual.html" hidden>使い方</a>
@@ -1083,9 +1083,8 @@ function dimBtn(id){
   b.insertAdjacentHTML("beforeend", "<small style='display:block;font-size:10px;font-weight:400'>公開版で使えます</small>");
 }
 if (inFrameNow){
-  dimBtn("pdfBtn");
   /* 書き出し系は、プレビュー画面でも保存できるときはそのまま使えるようにする */
-  getDownloads().then(d=>{ dlOK = !!d; if (!d) ["xlsxBtn","exportBtn","exportTypes"].forEach(dimBtn); renderBackup(); });
+  getDownloads().then(d=>{ dlOK = !!d; if (!d) ["pdfBtn","xlsxBtn","exportBtn","exportTypes"].forEach(dimBtn); renderBackup(); });
 }
 document.getElementById("clearBtn").addEventListener("click", ()=>{ startNew(); renderTemplates(); renderList(); renderPages(); });
 
@@ -1572,8 +1571,53 @@ document.getElementById("xlsxBtn").addEventListener("click", async ()=>{
 
 /* ---------- PDF保存 ---------- */
 window.addEventListener("afterprint", ()=>{ document.body.classList.remove("altprint"); document.getElementById("printPages").innerHTML = ""; });
+/* ---------- アプリの中でPDFファイルを直接作る ----------
+   iPad・iPhoneは印刷の仕組みが独自の余白を付けて白紙を挟むことがあるので、
+   仕上がりの紙を1枚ずつ画像にして、A4のPDFに貼っていく */
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==="MacIntel" && navigator.maxTouchPoints > 1);
+async function buildPdfFile(mode){
+  if (!window.html2canvas) await loadLib("vendor/html2canvas.min.js", "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js");
+  if (!window.jspdf) await loadLib("vendor/jspdf.umd.min.js", "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js");
+  const custom = isCustom(state.template) && typeOf(state.template);
+  let html = document.getElementById("pages").innerHTML;
+  if (custom && mode === "std") html = stdPagesHTML();
+  if (custom && mode === "both") html = html + stdPagesHTML();
+  /* 画面の外に、A4の幅（794px）で紙を並べ直して、1枚ずつ画像にする */
+  const box = document.createElement("div");
+  box.style.cssText = "position:fixed;left:-10000px;top:0;width:794px;background:#fff";
+  box.innerHTML = html; document.body.appendChild(box);
+  box.querySelectorAll(".page").forEach(pg=>{ pg.style.width = "794px"; pg.style.maxWidth = "none"; pg.style.boxShadow = "none"; pg.style.margin = "0"; });
+  box.querySelectorAll("[data-e]").forEach(el=>el.style.outline = "none");
+  try{
+    await Promise.all([...box.querySelectorAll("img")].map(i=>i.decode ? i.decode().catch(()=>{}) : null));
+    if (document.fonts && document.fonts.ready) await document.fonts.ready;
+    const pdf = new jspdf.jsPDF({unit:"mm", format:"a4", orientation:"portrait", compress:true});
+    const pages = [...box.querySelectorAll(".page")];
+    for (let i=0; i<pages.length; i++){
+      const cv = await html2canvas(pages[i], {scale:2, backgroundColor:"#ffffff", useCORS:true, logging:false});
+      if (i) pdf.addPage("a4", "portrait");
+      /* 紙の縦横比に合わせて、はみ出さないように置く（様式のページは縦横比が少し違うことがある） */
+      const r = cv.height/cv.width, w = Math.min(210, 297/r), h = w*r;
+      pdf.addImage(cv.toDataURL("image/jpeg", .88), "JPEG", (210-w)/2, (297-h)/2, w, h, undefined, "FAST");
+    }
+    return pdf.output("blob");
+  } finally { box.remove(); }
+}
 document.getElementById("pdfBtn").addEventListener("click", async ()=>{
   const inFrame = (()=>{ try{ return window.self !== window.top; }catch(e){ return true; } })();
+  /* iPad・iPhoneと、プレビュー画面（保存が使えるとき）は、印刷を使わずPDFファイルを直接作る */
+  if (isIOS || (inFrame && dlOK)){
+    const mode = await chooseContent("PDF"); if (!mode) return;
+    const b = document.getElementById("pdfBtn"), label = b.textContent;
+    b.textContent = "PDFを作成中…"; b.disabled = true;
+    try{
+      const blob = await buildPdfFile(mode);
+      await saveFile(`houkoku_${state.info.date||"nodate"}.pdf`, blob);
+      b.textContent = "保存しました";
+    }catch(e){ b.textContent = e && e.code==="declined" ? "保存をやめました" : "作れませんでした。もう一度お試しください"; }
+    b.disabled = false; setTimeout(()=>b.textContent = label, 3000);
+    return;
+  }
   if (inFrame){
     const b = document.getElementById("pdfBtn");
     b.textContent = "この画面では保存できません（ダウンロード版で動きます）";
