@@ -1479,13 +1479,14 @@ async function buildXlsx(mode){
       d.getCell(`${c1}${row+1}`).border = {top:{style:"thin"},left:{style:"thin"},bottom:{style:"thin"},right:{style:"thin"}};
       const boxW = colPx*3, boxH = rowPx*10, pad = 10;
       if (p.src){
-      const sz = await imgSize(p.src), sc = Math.min((boxW-pad*2)/sz.w, (boxH-pad*2)/sz.h);
+      const sz = await imgSize(p.src), sc = Math.min((boxW-pad*2)/sz.w, (boxH-pad*2)/sz.h)*0.85;
       const w = sz.w*sc, h = sz.h*sc;
       const id = wb.addImage({base64:p.src, extension:"jpeg"}), ox = (boxW-w)/2, oy = (boxH-h)/2;
-      /* 写真の左上と右下を、それぞれ「何列目・何行目から何ピクセル」でマスに固定する。
-         Excelの画面表示によっては行の高さだけ違う倍率で描かれることがあり、大きさで指定すると枠からはみ出すため */
+      /* 写真は縦横の比率を固定し、枠より一回り小さく（85%）中央に置く。
+         Excelはパソコンによって列の幅や行の高さを少し違う大きさで描くので、
+         マスに合わせて伸ばすと写真がゆがみ、枠ぴったりにすると線とずれて見えるため */
       const nat = (c, r, x, y)=>({nativeCol:c + Math.floor(x/colPx), nativeColOff:Math.round(x%colPx*9525), nativeRow:r + Math.floor(y/rowPx), nativeRowOff:Math.round(y%rowPx*9525)});
-      d.addImage(id, {tl:nat(c0, row, ox, oy), br:nat(c0, row, ox + w, oy + h), editAs:"twoCell"});
+      d.addImage(id, {tl:nat(c0, row, ox, oy), ext:{width:w, height:h}, editAs:"oneCell"});
       }
       cell(d, `${c1}${row+11}`, "報告事項", {dark:true});
       cell(d, `${String.fromCharCode(c1.charCodeAt(0)+1)}${row+11}:${c2}${row+11}`, p.comment, {align:"left"});
@@ -2448,7 +2449,7 @@ async function buildNativeXlsx(t){
         const photo = def.slot ? ph[o.start + b.n - 1] : null;
         if (b.f==="photo"){
           const im = photo && photo.src ? await loadImg(photo.src) : null; if (!im) continue;
-          const bw = b.w/100*xl.CW/xl.s, bh = b.h/100*xl.PH/xl.s, sc = Math.min(bw/im.naturalWidth, bh/im.naturalHeight), w = im.naturalWidth*sc, h = im.naturalHeight*sc;
+          const bw = b.w/100*xl.CW/xl.s, bh = b.h/100*xl.PH/xl.s, sc = Math.min(bw/im.naturalWidth, bh/im.naturalHeight)*0.9, w = im.naturalWidth*sc, h = im.naturalHeight*sc;
           const tl = sheetXY(xl, b.x, b.y), X = tl.X + (bw-w)/2, Y = tl.Y + (bh-h)/2, i = idx(xl.colX, X), j = idx(xl.rowY, Y);
           pics.push({src:photo.src, a:cellAt(xl, X, Y), b:cellAt(xl, X+w, Y+h), w, h});
         } else if (b.f==="check"){
@@ -2508,6 +2509,7 @@ async function buildNativeXlsx(t){
         const LATER = ["legacyDrawing","legacyDrawingHF","drawingHF","picture","oleObjects","controls","webPublishItems","tableParts","extLst","AlternateContent"];
         root.insertBefore(dEl, [...root.children].find(e=>LATER.includes(e.localName)) || null);
       }
+      const one = (o, inner)=>`<xdr:oneCellAnchor xmlns:xdr="${XDR}" xmlns:a="${A}">${pt("from", o.a)}<xdr:ext cx="${E(o.w)}" cy="${E(o.h)}"/>${inner}<xdr:clientData/></xdr:oneCellAnchor>`;
       const pt = (tag, a)=>`<xdr:${tag}><xdr:col>${a.c-1}</xdr:col><xdr:colOff>${E(a.dx)}</xdr:colOff><xdr:row>${a.r-1}</xdr:row><xdr:rowOff>${E(a.dy)}</xdr:rowOff></xdr:${tag}>`;
       const anchor = (o, inner)=>`<xdr:twoCellAnchor xmlns:xdr="${XDR}" xmlns:a="${A}" editAs="twoCell">${pt("from", o.a)}${pt("to", o.b)}${inner}<xdr:clientData/></xdr:twoCellAnchor>`;
       const xfrm = (w,h)=>`<a:xfrm><a:off x="0" y="0"/><a:ext cx="${E(w)}" cy="${E(h)}"/></a:xfrm>`;
@@ -2527,7 +2529,7 @@ async function buildNativeXlsx(t){
         files.set(`xl/media/hk${k}.jpeg`, new Uint8Array(await urlToBlob(pc.src).arrayBuffer()));
         addType('<Default Extension="jpeg" ContentType="image/jpeg"/>');
         const rid = "rIdHkP" + uid; addRel(dpath, rid, RNS + "/image", `/xl/media/hk${k}.jpeg`);
-        add += anchor(pc, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="写真 ${uid}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${RNS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>${xfrm(pc.w,pc.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`);
+        add += one(pc, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="写真 ${uid}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${RNS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>${xfrm(pc.w,pc.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`);
       }
       const dx = get(dpath), cut = dx.lastIndexOf("</");
       put(dpath, dx.slice(0, cut) + add + dx.slice(cut));
