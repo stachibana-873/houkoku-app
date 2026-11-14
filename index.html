@@ -1404,6 +1404,8 @@ async function buildXlsx(mode){
     if (opt.border !== false) c.border = BORDER;
     return c;
   }
+  /* 行の高さを1行ずつはっきり指定する。指定しないとExcelが自分の既定の高さ（低め）で開き、写真が枠からはみ出す */
+  function fixRows(ws, last){ for (let r=1; r<=last; r++){ const row = ws.getRow(r); if (!row.height) row.height = ROWH; } }
   function header(ws, top){
     /* 自社情報＋基本情報（毎ページ共通） */
     let r = top;
@@ -1441,7 +1443,7 @@ async function buildXlsx(mode){
   /* 様式だけを出すときも、作業チェック表を使っていればシートを1枚付ける */
   if (ct && mode !== "both" && hasChecks()){
     const cs = wb.addWorksheet("作業チェック"); setup(cs);
-    checkRows(cs, header(cs, 1));
+    fixRows(cs, checkRows(cs, header(cs, 1)));
   }
   if (mode === "std" || mode === "both" || !ct){
   /* 1枚目：報告書（一覧表） */
@@ -1459,6 +1461,7 @@ async function buildXlsx(mode){
   r++;
   cell(ws, `A${r}:G${r}`, "作業後の特記事項", {dark:true}); r++;
   const nc = cell(ws, `A${r}:G${r+4}`, info.note, {align:"left"}); nc.alignment = {...nc.alignment, vertical:"top"};
+  fixRows(ws, r + 4);
 
   }
 
@@ -1478,13 +1481,15 @@ async function buildXlsx(mode){
       if (p.src){
       const sz = await imgSize(p.src), sc = Math.min((boxW-pad*2)/sz.w, (boxH-pad*2)/sz.h);
       const w = sz.w*sc, h = sz.h*sc;
-      const id = wb.addImage({base64:p.src, extension:"jpeg"});
-      d.addImage(id, {tl:{col:c0 + (boxW-w)/2/colPx, row:row + (boxH-h)/2/rowPx}, ext:{width:w, height:h}, editAs:"oneCell"});
+      const id = wb.addImage({base64:p.src, extension:"jpeg"}), ox = (boxW-w)/2, oy = (boxH-h)/2;
+      /* 位置は「何列目・何行目から何ピクセル」で直接指定する（小数の列・行で渡すと、Excelで枠からずれる） */
+      d.addImage(id, {tl:{nativeCol:c0 + Math.floor(ox/colPx), nativeColOff:Math.round(ox%colPx*9525), nativeRow:row + Math.floor(oy/rowPx), nativeRowOff:Math.round(oy%rowPx*9525)}, ext:{width:w, height:h}, editAs:"oneCell"});
       }
       cell(d, `${c1}${row+11}`, "報告事項", {dark:true});
       cell(d, `${String.fromCharCode(c1.charCodeAt(0)+1)}${row+11}:${c2}${row+11}`, p.comment, {align:"left"});
-      d.getRow(row+11).height = Math.max(ROWH, Math.ceil(String(p.comment||"").length/16)*15);
+      d.getRow(row+11).height = Math.max(ROWH, String(p.comment||"").split("\n").reduce((n,l)=>n + Math.max(1, Math.ceil(l.length/11)), 0)*16 + 4);
     }
+    fixRows(d, top + 27);
   }
   return wb.xlsx.writeBuffer();
 }
