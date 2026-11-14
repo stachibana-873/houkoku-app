@@ -307,7 +307,10 @@ input.inplace{height:auto;min-height:100%}
   body.altprint #pages{display:none!important}
   body.altprint #printPages{display:block}
   .pdlg{display:none!important}
-  .page{width:210mm;height:297mm;max-width:none;aspect-ratio:auto;box-shadow:none;break-after:page;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  /* iPad・iPhoneは紙の高さぴったりだと少しはみ出したと判断して白紙を挟むので、ほんの少し低くして、はみ出しは切る */
+  html,body{margin:0!important;padding:0!important}
+  .page{width:210mm;height:296mm;max-width:none;aspect-ratio:auto;box-shadow:none;overflow:hidden;margin:0!important;break-after:page;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  #pages > .page:last-child,#printPages > .page:last-child{break-after:auto}
 }
 </style>
 </head><body>
