@@ -394,7 +394,7 @@ input.inplace{height:auto;min-height:100%}
 
     <section class="step">
       <h2><span>4</span>作業チェック表 <small style="font-weight:400;color:var(--muted)">（使わなければ空のままでOK）</small></h2>
-      <label style="flex-direction:row;align-items:flex-start;gap:8px;color:var(--fg);font-size:13px"><input type="checkbox" id="f_link" style="margin-top:4px;flex:none"><span style="font-weight:700">写真とコメントと連動する<small style="color:var(--muted);display:block;font-weight:400">チェックの項目と、写真の項目タイトルが同じになります。チェックの行を足すと写真の枠が増え、写真を足すとチェックの行が増えます。</small></span></label>
+      <label style="flex-direction:row;align-items:flex-start;gap:8px;color:var(--fg);font-size:13px"><input type="checkbox" id="f_link" style="margin-top:4px;flex:none"><span style="font-weight:700">写真とコメントと連動する<small style="color:var(--muted);display:block;font-weight:400">チェックの項目と写真の項目タイトル、備考と写真のコメントが同じになります。チェックの行を足すと写真の枠が増え、写真を足すとチェックの行が増えます。</small></span></label>
       <div class="plist" id="clist"></div>
       <button class="btn small ghost" id="addChk" type="button" style="align-self:flex-start">＋ 行を追加</button>
       <p class="hint">チェック表があると、1ページ目を表紙（現場情報とチェック表）にして、写真は2ページ目から並べます。</p>
@@ -916,6 +916,7 @@ plist.addEventListener("input", e=>{
     if (o && !state.photos.some(x=>x!==p && x.place.trim()===o)){ const c = state.checks.find(c=>c.text.trim()===o); if (c) c.text = p.place; }
     syncLink(); renderChecks();
   }
+  if (el.dataset.act==="comment") photoToMemo(p);
   renderPages();
 });
 
@@ -940,6 +941,7 @@ clist.addEventListener("input", e=>{
     if (old.trim()) state.photos.forEach(p=>{ if (p.place.trim()===old.trim()) p.place = c.text; });
     syncLink(); renderList();
   }
+  if (k==="memo") memoToPhoto(c);
   renderPages();
 });
 clist.addEventListener("click", e=>{
@@ -955,6 +957,22 @@ clist.addEventListener("click", e=>{
   state.checks = state.checks.filter(c=>c.id!==id);
   renderChecks(); renderPages();
 });
+/* 連動中の「備考」と「写真のコメント」：同じ項目名の最初の写真のコメントとつなぐ
+   （同じ項目に写真が何枚もあるとき、2枚目以降のコメントは写真ごとに別々のまま） */
+const firstPhotoOf = c => { const t = (c.text||"").trim(); return t ? state.photos.find(p=>p.place.trim()===t) : null; };
+function memoToPhoto(c){
+  if (!state.link || !c) return;
+  const p = firstPhotoOf(c); if (!p) return;
+  p.comment = c.memo;
+  const ta = document.querySelector(`#plist .pitem[data-id="${p.id}"] [data-act="comment"]`); if (ta && ta !== document.activeElement) ta.value = p.comment;
+}
+function photoToMemo(p){
+  if (!state.link || !p) return;
+  const t = p.place.trim(), c = t && state.checks.find(c=>c.text.trim()===t);
+  if (!c || firstPhotoOf(c) !== p) return;
+  c.memo = p.comment;
+  const inp = document.getElementById("cr-"+c.id); if (inp && inp !== document.activeElement) inp.value = c.memo;
+}
 /* チェック表と写真の連動：項目名（＝写真の項目タイトル）でつなぐ */
 function syncLink(reorder){
   if (!state.link) return;
@@ -972,6 +990,8 @@ function syncLink(reorder){
       addedCheck = true;
     }
   });
+  /* 片方だけに書いてある備考／コメントは、もう片方にも入れる */
+  state.checks.forEach(c=>{ const p = firstPhotoOf(c); if (!p) return; if (!c.memo && p.comment) c.memo = p.comment; else if (c.memo && !p.comment) p.comment = c.memo; });
   if (reorder){
     const pos = t => { const i = places.indexOf(t.trim()); return i<0 ? 1e9 : i; };
     state.checks.sort((a,b)=>pos(a.text)-pos(b.text));
@@ -1207,6 +1227,7 @@ function infoBlock(info){
     </div>
     <div class="note"><b>特記事項</b><span${E("info.note")}>${esc(info.note)}</span></div>`;
 }
+const hasChecks = () => state.checks.some(c=>(c.text||"").trim() || c.done || c.memo);
 function checkTable(){
   const done = state.checks.filter(c=>c.done).length;
   return `<table class="chk"><caption>作業チェック</caption>
@@ -1399,6 +1420,17 @@ async function buildXlsx(mode){
     if (mode !== "both") detail = ph.slice(Math.min(lay.used, ph.length));
   }
 
+  function checkRows(ws, r){
+    cell(ws, `A${r}:D${r}`, "作業箇所・内容", {dark:true}); cell(ws, `E${r}`, "実施", {dark:true}); cell(ws, `F${r}:G${r}`, "備考", {dark:true}); r++;
+    state.checks.forEach(c=>{ cell(ws, `A${r}:D${r}`, c.text, {align:"left"}); cell(ws, `E${r}`, c.done?"✓":""); cell(ws, `F${r}:G${r}`, c.memo, {align:"left"}); r++; });
+    cell(ws, `A${r}:D${r}`, "実施件数", {font:{bold:true}}); cell(ws, `E${r}:G${r}`, `${state.checks.filter(c=>c.done).length} / ${state.checks.length} 件`, {align:"left"}); r++;
+    return r;
+  }
+  /* 様式だけを出すときも、作業チェック表を使っていればシートを1枚付ける */
+  if (ct && mode !== "both" && hasChecks()){
+    const cs = wb.addWorksheet("作業チェック"); setup(cs);
+    checkRows(cs, header(cs, 1));
+  }
   if (mode === "std" || mode === "both" || !ct){
   /* 1枚目：報告書（一覧表） */
   const ws = wb.addWorksheet("報告書"); setup(ws);
@@ -1411,12 +1443,7 @@ async function buildXlsx(mode){
     const lines = Math.max(1, ...String(p.comment||"").split("\n").map(l=>Math.ceil(l.length/22)));
     ws.getRow(r).height = Math.max(ROWH, lines*15); r++;
   });
-  if (state.checks.length){
-    r++;
-    cell(ws, `A${r}:D${r}`, "作業箇所・内容", {dark:true}); cell(ws, `E${r}`, "実施", {dark:true}); cell(ws, `F${r}:G${r}`, "備考", {dark:true}); r++;
-    state.checks.forEach(c=>{ cell(ws, `A${r}:D${r}`, c.text, {align:"left"}); cell(ws, `E${r}`, c.done?"✓":""); cell(ws, `F${r}:G${r}`, c.memo, {align:"left"}); r++; });
-    cell(ws, `A${r}:D${r}`, "実施件数", {font:{bold:true}}); cell(ws, `E${r}:G${r}`, `${state.checks.filter(c=>c.done).length} / ${state.checks.length} 件`, {align:"left"}); r++;
-  }
+  if (state.checks.length){ r++; r = checkRows(ws, r); }
   r++;
   cell(ws, `A${r}:G${r}`, "作業後の特記事項", {dark:true}); r++;
   const nc = cell(ws, `A${r}:G${r+4}`, info.note, {align:"left"}); nc.alignment = {...nc.alignment, vertical:"top"};
@@ -1495,11 +1522,11 @@ document.getElementById("xlsxBtn").addEventListener("click", async ()=>{
     if (nat){
       /* 取引先のExcelに書き込めたとき：そのExcelと、標準の報告書（または入りきらなかった写真）を別々のファイルで保存 */
       await saveFile(`${base}_form.xlsx`, nat);
-      const lay = customLayout(ct), rest = state.photos.length > lay.used;
+      const lay = customLayout(ct), rest = state.photos.length > lay.used || hasChecks();
       if (mode === "both" || rest){
         const buf = await buildXlsx(mode === "both" ? "std" : "extra");
         await new Promise(r=>setTimeout(r, 400));
-        await saveFile(mode === "both" ? `${base}_report.xlsx` : `${base}_photos.xlsx`, new Blob([buf], {type:XT}));
+        await saveFile(mode === "both" ? `${base}_report.xlsx` : `${base}_extra.xlsx`, new Blob([buf], {type:XT}));
         b.textContent = "2つ保存しました";
       } else b.textContent = "保存しました";
     } else {
@@ -1760,12 +1787,14 @@ function renderCustomPages(t){
     `<div class="anno ${n.kind}" data-nid="${n.id}" style="left:${n.x}%;top:${n.y}%">${n.kind==="text" ? esc(n.text) : n.kind==="check" ? "✓" : ""}</div>`).join("");
   /* 様式の写真欄に入りきらない写真（写真欄がない様式なら全部）は、後ろに写真ページを付ける */
   const extra = photoPages(ph.slice(Math.min(used, ph.length)), state.info);
-  const total = out.length + extra.length;
+  /* 作業チェック表を使っているときは、様式の後ろにチェック表のページを付ける */
+  const chkPage = hasChecks() ? `<article class="page"><div class="sheet">${listHead(state.info)}${checkTable()}<div style="flex:1"></div></div></article>` : "";
+  const total = out.length + extra.length + (chkPage ? 1 : 0);
   document.getElementById("pages").innerHTML = out.map(({pg,pi,start,first})=>`
     <article class="page cpage" data-pi="${pi}" style="aspect-ratio:1/${pg.ratio}"><img class="cbg" src="${vurl(pg.bg)}" alt="">
       ${pg.boxes.map(b=>boxHTML(b, CFIELD_DEFS[b.f].slot ? ph[start+b.n-1] : null, false, t, pg.ratio)).join("")}
       ${first ? noteHTML(pi) : ""}
-    </article>`).join("") + extra.map((body,i)=>`
+    </article>`).join("") + chkPage + extra.map((body,i)=>`
     <article class="page"><div class="sheet">${body}<div class="foot" style="text-align:right">写真 ${i+1}/${extra.length}</div></div></article>`).join("");
   document.getElementById("pageCount").textContent = `${total}ページ・写真${ph.length}枚`;
   renderCFields(t);
@@ -1860,7 +1889,7 @@ function directEdit(el){
     get = ()=>ps[0].place||""; set = v=>ps.forEach(p=>p.place = v);
   } else {
     const [o, key] = eTarget(k); if (!o) return;
-    get = ()=>o[key]||""; set = v=>{ o[key] = v; if (a==="company"){ delete state._sampleCompany; saveCompany(); } };
+    get = ()=>o[key]||""; set = v=>{ o[key] = v; if (a==="company"){ delete state._sampleCompany; saveCompany(); } if (a==="check" && key==="memo") memoToPhoto(o); if (a==="photo" && key==="comment") photoToMemo(o); };
   }
   const isDate = k==="info.date";
   const ta = document.createElement(isDate ? "input" : "textarea");
