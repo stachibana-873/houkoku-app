@@ -1482,12 +1482,14 @@ async function buildXlsx(mode){
       const sz = await imgSize(p.src), sc = Math.min((boxW-pad*2)/sz.w, (boxH-pad*2)/sz.h);
       const w = sz.w*sc, h = sz.h*sc;
       const id = wb.addImage({base64:p.src, extension:"jpeg"}), ox = (boxW-w)/2, oy = (boxH-h)/2;
-      /* 位置は「何列目・何行目から何ピクセル」で直接指定する（小数の列・行で渡すと、Excelで枠からずれる） */
-      d.addImage(id, {tl:{nativeCol:c0 + Math.floor(ox/colPx), nativeColOff:Math.round(ox%colPx*9525), nativeRow:row + Math.floor(oy/rowPx), nativeRowOff:Math.round(oy%rowPx*9525)}, ext:{width:w, height:h}, editAs:"oneCell"});
+      /* 写真の左上と右下を、それぞれ「何列目・何行目から何ピクセル」でマスに固定する。
+         Excelの画面表示によっては行の高さだけ違う倍率で描かれることがあり、大きさで指定すると枠からはみ出すため */
+      const nat = (c, r, x, y)=>({nativeCol:c + Math.floor(x/colPx), nativeColOff:Math.round(x%colPx*9525), nativeRow:r + Math.floor(y/rowPx), nativeRowOff:Math.round(y%rowPx*9525)});
+      d.addImage(id, {tl:nat(c0, row, ox, oy), br:nat(c0, row, ox + w, oy + h), editAs:"twoCell"});
       }
       cell(d, `${c1}${row+11}`, "報告事項", {dark:true});
       cell(d, `${String.fromCharCode(c1.charCodeAt(0)+1)}${row+11}:${c2}${row+11}`, p.comment, {align:"left"});
-      d.getRow(row+11).height = Math.max(ROWH, String(p.comment||"").split("\n").reduce((n,l)=>n + Math.max(1, Math.ceil(l.length/11)), 0)*16 + 4);
+      d.getRow(row+11).height = Math.max(ROWH, String(p.comment||"").split("\n").reduce((n,l)=>n + Math.max(1, Math.ceil(l.length/9)), 0)*16 + 4);
     }
     fixRows(d, top + 27);
   }
@@ -2416,7 +2418,9 @@ async function buildNativeXlsx(t){
     const cur = (r,c)=>{ const k = r+":"+c; if (!work.has(k)) work.set(k, {r, c, text:textOf(cellEl(r,c,false)), dirty:false}); return work.get(k); };
     const shapes = [], pics = [], checkedSp = new Set();
     const ptOf = (xl, cqw)=>Math.max(6, cqw*xl.CW/100/xl.s*.75);
-    const shapeAt = (xl, xp, yp, wp, hp, o)=>{ const a = locate(xl, xp, yp); shapes.push({...o, a, w:wp/100*xl.CW/xl.s, h:hp/100*xl.PH/xl.s}); };
+    /* 図形や写真は、左上と右下の両方をマスに固定する。Excelの表示の違いで行の高さが変わっても、マスからはみ出さない */
+    const cellAt = (xl, X, Y)=>{ const i = idx(xl.colX, X), j = idx(xl.rowY, Y); return {c:xl.c1+i, r:xl.r1+j, dx:Math.max(0, X - xl.colX[i]), dy:Math.max(0, Y - xl.rowY[j])}; };
+    const shapeAt = (xl, xp, yp, wp, hp, o)=>{ const {X, Y} = sheetXY(xl, xp, yp), w = wp/100*xl.CW/xl.s, h = hp/100*xl.PH/xl.s; shapes.push({...o, a:cellAt(xl, X, Y), b:cellAt(xl, X+w, Y+h), w, h}); };
     const BOXCH = /[□☐]/;
 
     for (const o of outs){
@@ -2446,7 +2450,7 @@ async function buildNativeXlsx(t){
           const im = photo && photo.src ? await loadImg(photo.src) : null; if (!im) continue;
           const bw = b.w/100*xl.CW/xl.s, bh = b.h/100*xl.PH/xl.s, sc = Math.min(bw/im.naturalWidth, bh/im.naturalHeight), w = im.naturalWidth*sc, h = im.naturalHeight*sc;
           const tl = sheetXY(xl, b.x, b.y), X = tl.X + (bw-w)/2, Y = tl.Y + (bh-h)/2, i = idx(xl.colX, X), j = idx(xl.rowY, Y);
-          pics.push({src:photo.src, a:{c:xl.c1+i, r:xl.r1+j, dx:Math.max(0,X-xl.colX[i]), dy:Math.max(0,Y-xl.rowY[j])}, w, h});
+          pics.push({src:photo.src, a:cellAt(xl, X, Y), b:cellAt(xl, X+w, Y+h), w, h});
         } else if (b.f==="check"){
           if (!state.cvals[cvalKey(t,b)]) continue;
           const m = home(b), w = cur(m.r, m.c), n = order(b, m);
@@ -2504,17 +2508,18 @@ async function buildNativeXlsx(t){
         const LATER = ["legacyDrawing","legacyDrawingHF","drawingHF","picture","oleObjects","controls","webPublishItems","tableParts","extLst","AlternateContent"];
         root.insertBefore(dEl, [...root.children].find(e=>LATER.includes(e.localName)) || null);
       }
-      const anchor = (a, w, h, inner)=>`<xdr:oneCellAnchor xmlns:xdr="${XDR}" xmlns:a="${A}"><xdr:from><xdr:col>${a.c-1}</xdr:col><xdr:colOff>${E(a.dx)}</xdr:colOff><xdr:row>${a.r-1}</xdr:row><xdr:rowOff>${E(a.dy)}</xdr:rowOff></xdr:from><xdr:ext cx="${E(w)}" cy="${E(h)}"/>${inner}<xdr:clientData/></xdr:oneCellAnchor>`;
+      const pt = (tag, a)=>`<xdr:${tag}><xdr:col>${a.c-1}</xdr:col><xdr:colOff>${E(a.dx)}</xdr:colOff><xdr:row>${a.r-1}</xdr:row><xdr:rowOff>${E(a.dy)}</xdr:rowOff></xdr:${tag}>`;
+      const anchor = (o, inner)=>`<xdr:twoCellAnchor xmlns:xdr="${XDR}" xmlns:a="${A}" editAs="twoCell">${pt("from", o.a)}${pt("to", o.b)}${inner}<xdr:clientData/></xdr:twoCellAnchor>`;
       const xfrm = (w,h)=>`<a:xfrm><a:off x="0" y="0"/><a:ext cx="${E(w)}" cy="${E(h)}"/></a:xfrm>`;
       let add = "";
       for (const sh of shapes){
         const id = 90000 + (++uid);
         const nv = `<xdr:nvSpPr><xdr:cNvPr id="${id}" name="記入 ${uid}"/><xdr:cNvSpPr/></xdr:nvSpPr>`;
-        if (sh.kind==="ellipse") add += anchor(sh.a, sh.w, sh.h, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="15875"><a:solidFill><a:srgbClr val="CC0000"/></a:solidFill></a:ln></xdr:spPr></xdr:sp>`);
+        if (sh.kind==="ellipse") add += anchor(sh, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="15875"><a:solidFill><a:srgbClr val="CC0000"/></a:solidFill></a:ln></xdr:spPr></xdr:sp>`);
         else {
           const rpr = `<a:rPr lang="ja-JP" altLang="en-US" sz="${Math.round(sh.pt*100)}"${sh.bold?' b="1"':""}><a:solidFill><a:srgbClr val="${sh.color}"/></a:solidFill></a:rPr>`;
           const ps = String(sh.text).split("\n").map(l=>`<a:p><a:pPr algn="${sh.center?"ctr":"l"}"/><a:r>${rpr}<a:t>${xesc(l)}</a:t></a:r></a:p>`).join("");
-          add += anchor(sh.a, sh.w, sh.h, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="overflow" horzOverflow="overflow" wrap="${sh.wrap?"square":"none"}" lIns="18000" tIns="0" rIns="0" bIns="0" anchor="${sh.anchor||"ctr"}"/><a:lstStyle/>${ps}</xdr:txBody></xdr:sp>`);
+          add += anchor(sh, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="overflow" horzOverflow="overflow" wrap="${sh.wrap?"square":"none"}" lIns="18000" tIns="0" rIns="0" bIns="0" anchor="${sh.anchor||"ctr"}"/><a:lstStyle/>${ps}</xdr:txBody></xdr:sp>`);
         }
       }
       for (const pc of pics){
@@ -2522,7 +2527,7 @@ async function buildNativeXlsx(t){
         files.set(`xl/media/hk${k}.jpeg`, new Uint8Array(await urlToBlob(pc.src).arrayBuffer()));
         addType('<Default Extension="jpeg" ContentType="image/jpeg"/>');
         const rid = "rIdHkP" + uid; addRel(dpath, rid, RNS + "/image", `/xl/media/hk${k}.jpeg`);
-        add += anchor(pc.a, pc.w, pc.h, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="写真 ${uid}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${RNS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>${xfrm(pc.w,pc.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`);
+        add += anchor(pc, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="写真 ${uid}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${RNS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>${xfrm(pc.w,pc.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`);
       }
       const dx = get(dpath), cut = dx.lastIndexOf("</");
       put(dpath, dx.slice(0, cut) + add + dx.slice(cut));
