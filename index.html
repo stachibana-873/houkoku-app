@@ -438,7 +438,7 @@ input.inplace{height:auto;min-height:100%}
     <p class="hint" style="margin:0">取引先の様式の型を使っているので、保存する中身を選べます。</p>
     <button class="btn dlopt" type="button" data-dl="form">取引先の様式<small id="dl_formnote">いま画面に見えている、取引先の様式に書き込んだ形です。</small></button>
     <button class="btn ghost dlopt" type="button" data-dl="std">写真報告書メーカーの形<small>このアプリ標準の報告書（一覧表と写真ページ）の形です。</small></button>
-    <button class="btn ghost dlopt" type="button" data-dl="both">両方まとめて<small>取引先の様式のあとに、標準の報告書を続けて1つのファイルにします。</small></button>
+    <button class="btn ghost dlopt" type="button" data-dl="both">両方まとめて<small id="dl_bothnote">取引先の様式のあとに、標準の報告書を続けて1つのファイルにします。</small></button>
     <div class="acts"><button class="btn small ghost" type="button" data-dl="">やめる</button></div>
   </form>
 </div>
@@ -1387,7 +1387,7 @@ async function buildXlsx(mode){
   const ct = mode !== "std" ? typeOf(state.template) : null;
   if (ct){
     const lay = customLayout(ct);
-    for (let i=0; i<lay.out.length; i++){
+    for (let i=0; i<lay.out.length && mode !== "extra"; i++){
       const cv = await rasterCustomPage(ct, lay.out[i]);
       const fs = wb.addWorksheet("様式_"+(i+1));
       const w = 760, h = Math.round(w*cv.height/cv.width);
@@ -1396,10 +1396,10 @@ async function buildXlsx(mode){
       const id = wb.addImage({base64:cv.toDataURL("image/jpeg", .9), extension:"jpeg"});
       fs.addImage(id, {tl:{col:0, row:0}, ext:{width:w, height:h}});
     }
-    if (mode === "form") detail = ph.slice(Math.min(lay.used, ph.length));
+    if (mode !== "both") detail = ph.slice(Math.min(lay.used, ph.length));
   }
 
-  if (mode !== "form" || !ct){
+  if (mode === "std" || mode === "both" || !ct){
   /* 1枚目：報告書（一覧表） */
   const ws = wb.addWorksheet("報告書"); setup(ws);
   cell(ws, "A1:G1", info.title || "作業報告書", {border:false, font:{size:16, bold:true}});
@@ -1455,9 +1455,14 @@ function chooseContent(kind){
   if (!isCustom(state.template) || !typeOf(state.template)) return Promise.resolve("std");
   const dlg = document.getElementById("dldlg");
   document.getElementById("dl_title").textContent = kind + "：どの内容で保存しますか";
-  document.getElementById("dl_formnote").textContent = kind==="Excel"
-    ? "取引先の様式に書き込んだ形です。仕上がりの紙をそのままシートに貼ります。"
+  const nat = kind==="Excel" && nativeOK(typeOf(state.template));
+  document.getElementById("dl_formnote").textContent = nat
+    ? "取引先のExcelのマスに直接書き込みます。受け取った相手があとから編集できます。"
+    : kind==="Excel" ? "取引先の様式に書き込んだ形です。仕上がりの紙を画像としてシートに貼ります（マスの編集はできません）。"
     : "いま画面に見えている、取引先の様式に書き込んだ形です。";
+  document.getElementById("dl_bothnote").textContent = nat
+    ? "取引先のExcelと、標準の報告書の、2つのファイルを保存します。"
+    : "取引先の様式のあとに、標準の報告書を続けて1つのファイルにします。";
   dlg.hidden = false;
   return new Promise(res=>{
     const h = e=>{
@@ -1483,9 +1488,25 @@ document.getElementById("xlsxBtn").addEventListener("click", async ()=>{
   const mode = await chooseContent("Excel"); if (!mode) return;
   b.textContent = "作成中…"; b.disabled = true;
   try{
-    const buf = await buildXlsx(mode);
-    await saveFile(`houkoku_${state.info.date||"nodate"}.xlsx`, new Blob([buf], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
-    b.textContent = "保存しました";
+    const XT = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", base = `houkoku_${state.info.date||"nodate"}`;
+    const ct = mode !== "std" ? typeOf(state.template) : null;
+    let nat = null;
+    if (ct && nativeOK(ct)){ try{ nat = await buildNativeXlsx(ct); }catch(e){ nat = null; } }
+    if (nat){
+      /* 取引先のExcelに書き込めたとき：そのExcelと、標準の報告書（または入りきらなかった写真）を別々のファイルで保存 */
+      await saveFile(`${base}_form.xlsx`, nat);
+      const lay = customLayout(ct), rest = state.photos.length > lay.used;
+      if (mode === "both" || rest){
+        const buf = await buildXlsx(mode === "both" ? "std" : "extra");
+        await new Promise(r=>setTimeout(r, 400));
+        await saveFile(mode === "both" ? `${base}_report.xlsx` : `${base}_photos.xlsx`, new Blob([buf], {type:XT}));
+        b.textContent = "2つ保存しました";
+      } else b.textContent = "保存しました";
+    } else {
+      const buf = await buildXlsx(mode);
+      await saveFile(`${base}.xlsx`, new Blob([buf], {type:XT}));
+      b.textContent = "保存しました";
+    }
   }catch(e){ b.textContent = e && e.code==="declined" ? "保存をやめました" : e && e.code ? "この画面では保存できません（公開版で動きます）" : "作れませんでした。通信状況を確認してください"; }
   b.disabled = false; setTimeout(()=>b.textContent = label, 3000);
 });
@@ -2127,14 +2148,17 @@ async function unzipEntries(buf){
     out[name] = {method, csize, lo};
     p += 46 + nl + el + cl;
   }
-  out.__read = async name=>{
+  const names = Object.keys(out);
+  out.__bytes = async name=>{
     const f = out[name]; if (!f) return null;
     const lnl = dv.getUint16(f.lo+26, true), lel = dv.getUint16(f.lo+28, true), st = f.lo + 30 + lnl + lel;
     const data = u8.subarray(st, st + f.csize);
-    if (f.method === 0) return td.decode(data);
+    if (f.method === 0) return data.slice();
     const ds = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-    return await new Response(ds).text();
+    return new Uint8Array(await new Response(ds).arrayBuffer());
   };
+  out.__read = async name=>{ const b = await out.__bytes(name); return b ? td.decode(b) : null; };
+  out.__names = names;
   return out;
 }
 const xmlDoc = s => new DOMParser().parseFromString(s, "application/xml");
@@ -2170,7 +2194,8 @@ async function readXlsxExtras(buf){
             let text = ((/<v:textbox[^>]*>([\s\S]*?)<\/v:textbox>/.exec(sx)||[])[1]||"").replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]+>/g,"").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
             const checked = /<x:Checked>\s*1/.test(sx);
             const fsz = (/<font[^>]*\bsize="(\d+)"/.exec(sx)||[])[1];
-            list.push({kind:ot, text, checked, size: fsz ? +fsz/20 : null, from:{c:a[0], dx:a[1], r:a[2], dy:a[3]}, to:{c:a[4], dx:a[5], r:a[6], dy:a[7]}});
+            const spid = (/\bid="_x0000_s(\d+)"/.exec(sx)||[])[1] || null;
+            list.push({kind:ot, text, checked, spid, size: fsz ? +fsz/20 : null, from:{c:a[0], dx:a[1], r:a[2], dy:a[3]}, to:{c:a[4], dx:a[5], r:a[6], dy:a[7]}});
           }
         }
         if (/\/drawing$/.test(r.type)){
@@ -2203,10 +2228,246 @@ async function readXlsxExtras(buf){
   }catch(e){}
   return res;
 }
+/* ==========================================================
+   取引先のExcelに書き戻す
+   型を作るときに読み込んだExcelそのものを開き、マスに文字を入れ、□を☑に変えて保存し直す。
+   Excelの部品（チェックボックスなど）を壊さないよう、ファイルの中身（XML）を直接書き換える。
+   ========================================================== */
+const CRC_T = (()=>{ const t = new Uint32Array(256); for (let n=0; n<256; n++){ let c = n; for (let k=0; k<8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function crc32(u8){ let c = 0xFFFFFFFF; for (let i=0; i<u8.length; i++) c = CRC_T[(c ^ u8[i]) & 0xFF] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; }
+async function zipWrite(files){
+  const te = new TextEncoder(), parts = [], cen = []; let off = 0;
+  for (const [name, data] of files){
+    const nm = te.encode(name), crc = crc32(data);
+    const comp = new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer());
+    const use = comp.length < data.length, body = use ? comp : data;
+    const h = new DataView(new ArrayBuffer(30));
+    h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x0800, true); h.setUint16(8, use ? 8 : 0, true);
+    h.setUint16(10, 0, true); h.setUint16(12, 0x21, true);
+    h.setUint32(14, crc, true); h.setUint32(18, body.length, true); h.setUint32(22, data.length, true); h.setUint16(26, nm.length, true);
+    const c = new DataView(new ArrayBuffer(46));
+    c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x0800, true); c.setUint16(10, use ? 8 : 0, true);
+    c.setUint16(12, 0, true); c.setUint16(14, 0x21, true);
+    c.setUint32(16, crc, true); c.setUint32(20, body.length, true); c.setUint32(24, data.length, true); c.setUint16(28, nm.length, true); c.setUint32(42, off, true);
+    parts.push(new Uint8Array(h.buffer), nm, body); cen.push(new Uint8Array(c.buffer), nm);
+    off += 30 + nm.length + body.length;
+  }
+  const clen = cen.reduce((a,b)=>a + b.length, 0), e = new DataView(new ArrayBuffer(22));
+  e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.size, true); e.setUint16(10, files.size, true); e.setUint32(12, clen, true); e.setUint32(16, off, true);
+  return new Blob([...parts, ...cen, new Uint8Array(e.buffer)], {type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+}
+const colName = n => { let s = ""; while (n > 0){ const m = (n-1) % 26; s = String.fromCharCode(65+m) + s; n = (n-1-m)/26; } return s; };
+const colNum = s => [...s].reduce((a,ch)=>a*26 + ch.charCodeAt(0) - 64, 0);
+const xesc = t => String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+/* この型は「取引先のExcelに書き戻す」ができるか */
+function nativeOK(t){
+  if (!t || !t.xfile || !t.xfile.data || !window.CompressionStream) return false;
+  const lay = customLayout(t);
+  return lay.out.length > 0 && lay.out.every(o=>o.first && o.pg.xl && o.pg.xl.fid===t.xfile.id);
+}
+async function buildNativeXlsx(t){
+  const NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main", RNS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+  const td = new TextDecoder(), te = new TextEncoder();
+  const z = await unzipEntries(await urlToBlob(t.xfile.data).arrayBuffer());
+  const files = new Map();
+  for (const n of z.__names) if (!n.endsWith("/")) files.set(n, await z.__bytes(n));
+  const get = n => files.has(n) ? td.decode(files.get(n)) : null, put = (n, s)=>files.set(n, te.encode(s));
+  const ser = doc => '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' + new XMLSerializer().serializeToString(doc.documentElement);
+  const relsOf = path => { const d = path.split("/"), f = d.pop(); return [...d, "_rels", f+".rels"].join("/"); };
+  const readRelsOf = path => { const s = get(relsOf(path)); return s ? [...xmlDoc(s).getElementsByTagName("Relationship")].map(r=>({id:r.getAttribute("Id"), type:r.getAttribute("Type")||"", target:relPath(path, r.getAttribute("Target")||"")})) : []; };
+  const addRel = (path, id, type, target)=>{
+    const rp = relsOf(path), cur = get(rp) || '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>';
+    put(rp, cur.replace(/<\/Relationships>\s*$/, `<Relationship Id="${id}" Type="${type}" Target="${target}"/></Relationships>`));
+  };
+  const addType = xml => { let ct = get("[Content_Types].xml"); if (!ct.includes(xml)) put("[Content_Types].xml", ct.replace(/<\/Types>\s*$/, xml + "</Types>")); };
+
+  /* シート名 → ファイルの場所、共有文字列 */
+  const wrels = readRelsOf("xl/workbook.xml"), sheetPath = {};
+  [...xmlDoc(get("xl/workbook.xml")).getElementsByTagName("sheet")].forEach(sh=>{
+    const rid = sh.getAttribute("r:id") || sh.getAttributeNS(RNS, "id"), rel = wrels.find(r=>r.id===rid);
+    if (rel) sheetPath[sh.getAttribute("name")] = rel.target;
+  });
+  const ssRel = wrels.find(r=>/sharedStrings$/.test(r.type)), ssXml = ssRel ? get(ssRel.target) : null;
+  const shared = ssXml ? [...xmlDoc(ssXml).getElementsByTagName("si")].map(si=>
+    [...si.getElementsByTagName("t")].filter(n=>n.parentNode.localName!=="rPh").map(n=>n.textContent).join("")) : [];
+
+  const lay = customLayout(t), ph = state.photos;
+  const bySheet = new Map();
+  lay.out.forEach(o=>{ const k = o.pg.xl.sheet; if (!bySheet.has(k)) bySheet.set(k, []); bySheet.get(k).push(o); });
+  let removedFormula = false, uid = 0;
+
+  for (const [sheetName, outs] of bySheet){
+    const path = sheetPath[sheetName]; if (!path || !files.has(path)) throw new Error("sheet");
+    const doc = xmlDoc(get(path)), root = doc.documentElement;
+    const sd = [...root.children].find(e=>e.localName==="sheetData"); if (!sd) throw new Error("sheetData");
+    const merges = [...root.getElementsByTagName("mergeCell")].map(m=>parseRange(m.getAttribute("ref"))).filter(Boolean);
+    const masterOf = (r,c)=>{ const g = merges.find(g=>r>=g.r1 && r<=g.r2 && c>=g.c1 && c<=g.c2); return g ? {r:g.r1, c:g.c1} : {r, c}; };
+    const rows = new Map(); [...sd.children].forEach(el=>{ if (el.localName==="row") rows.set(+el.getAttribute("r"), el); });
+    const cellEl = (r, c, create)=>{
+      let row = rows.get(r);
+      if (!row){
+        if (!create) return null;
+        row = doc.createElementNS(NS, "row"); row.setAttribute("r", r);
+        const after = [...sd.children].find(el=>+el.getAttribute("r") > r); sd.insertBefore(row, after || null); rows.set(r, row);
+      }
+      const ref = colName(c) + r;
+      let el = [...row.children].find(e=>e.getAttribute("r")===ref);
+      if (!el && create){
+        el = doc.createElementNS(NS, "c"); el.setAttribute("r", ref);
+        const after = [...row.children].find(e=>colNum((e.getAttribute("r")||"").replace(/\d+/g,"")) > c); row.insertBefore(el, after || null);
+      }
+      return el;
+    };
+    const textOf = el => {
+      if (!el) return "";
+      const tp = el.getAttribute("t"), v = [...el.children].find(e=>e.localName==="v");
+      if (tp==="s") return v ? (shared[+v.textContent] ?? "") : "";
+      if (tp==="inlineStr") return [...el.getElementsByTagName("t")].filter(n=>n.parentNode.localName!=="rPh").map(n=>n.textContent).join("");
+      return v ? v.textContent : "";
+    };
+    const setText = (el, text)=>{
+      if ([...el.children].some(e=>e.localName==="f")) removedFormula = true;
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.setAttribute("t", "inlineStr");
+      const is = doc.createElementNS(NS, "is"), tt = doc.createElementNS(NS, "t");
+      tt.setAttributeNS("http://www.w3.org/XML/1998/namespace", "xml:space", "preserve"); tt.textContent = text;
+      is.appendChild(tt); el.appendChild(is);
+    };
+    /* 紙の上の位置（％）→ シートの位置（px）→ セル */
+    const sheetXY = (xl, xp, yp)=>({X:(xp/100*xl.CW - xl.M)/xl.s, Y:(yp/100*xl.PH - xl.M)/xl.s + xl.oy});
+    const idx = (arr, v)=>{ let i = 0; while (i < arr.length-2 && arr[i+1] <= v) i++; return i; };
+    const locate = (xl, xp, yp)=>{ const {X, Y} = sheetXY(xl, xp, yp), i = idx(xl.colX, X), j = idx(xl.rowY, Y); return {c:xl.c1+i, r:xl.r1+j, dx:Math.max(0, X - xl.colX[i]), dy:Math.max(0, Y - xl.rowY[j])}; };
+
+    const work = new Map();          /* セルごとの、書き換え途中の文字 */
+    const cur = (r,c)=>{ const k = r+":"+c; if (!work.has(k)) work.set(k, {r, c, text:textOf(cellEl(r,c,false)), dirty:false}); return work.get(k); };
+    const shapes = [], pics = [], checkedSp = new Set();
+    const ptOf = (xl, cqw)=>Math.max(6, cqw*xl.CW/100/xl.s*.75);
+    const shapeAt = (xl, xp, yp, wp, hp, o)=>{ const a = locate(xl, xp, yp); shapes.push({...o, a, w:wp/100*xl.CW/xl.s, h:hp/100*xl.PH/xl.s}); };
+    const BOXCH = /[□☐]/;
+
+    for (const o of outs){
+      const pg = o.pg, xl = pg.xl;
+      /* チェック欄は名前の分まで横に長いことがあるので、□のある左端で見る */
+      const home = b => { const a = locate(xl, b.x + (b.f==="check" ? Math.min(b.w/2, 1) : b.w/2), b.y + b.h/2); return masterOf(a.r, a.c); };
+      /* 同じマスの中に□がいくつもあるとき、左上から何番目かで見分ける */
+      const checks = pg.boxes.filter(b=>b.f==="check").map(b=>({b, m:home(b)}));
+      const order = (b, m)=>checks.filter(k=>k.m.r===m.r && k.m.c===m.c).sort((p,q)=>Math.abs(p.b.y-q.b.y) > Math.max(p.b.h,q.b.h)*.6 ? p.b.y-q.b.y : p.b.x-q.b.x).findIndex(k=>k.b===b);
+      const done = new Map();        /* マスごとに、もう☑にした番号 */
+      const writeText = (b, v, cqw)=>{
+        v = String(v ?? ""); if (!v.trim()) return;
+        const m = home(b), w = cur(m.r, m.c);
+        if (!w.text.trim()){ w.text = v; w.dirty = true; return; }
+        if (w.filled){ w.text += " " + v; w.dirty = true; return; }
+        const gap = /[ 　]{2,}/.exec(w.text);
+        if (gap && !w.gapUsed && pg.boxes.filter(k=>k!==b && (k.f==="free" || !CFIELD_DEFS[k.f].own) && k.f!=="photo").every(k=>{ const mm = home(k); return mm.r!==m.r || mm.c!==m.c; })){
+          w.text = w.text.slice(0, gap.index) + " " + v + " " + w.text.slice(gap.index + gap[0].length); w.dirty = true; w.gapUsed = true; return;
+        }
+        /* 見出しなどの文字が入っているマスは書き換えず、同じ位置に文字を重ねる */
+        shapeAt(xl, b.x, b.y, b.w, b.h, {kind:"text", text:v, pt:ptOf(xl, cqw), color:"111111", anchor:b.h < 3 ? "ctr" : "t", wrap:b.h >= 3});
+      };
+      for (const b of pg.boxes){
+        const def = CFIELD_DEFS[b.f]; if (!def) continue;
+        const photo = def.slot ? ph[o.start + b.n - 1] : null;
+        if (b.f==="photo"){
+          const im = photo && photo.src ? await loadImg(photo.src) : null; if (!im) continue;
+          const bw = b.w/100*xl.CW/xl.s, bh = b.h/100*xl.PH/xl.s, sc = Math.min(bw/im.naturalWidth, bh/im.naturalHeight), w = im.naturalWidth*sc, h = im.naturalHeight*sc;
+          const tl = sheetXY(xl, b.x, b.y), X = tl.X + (bw-w)/2, Y = tl.Y + (bh-h)/2, i = idx(xl.colX, X), j = idx(xl.rowY, Y);
+          pics.push({src:photo.src, a:{c:xl.c1+i, r:xl.r1+j, dx:Math.max(0,X-xl.colX[i]), dy:Math.max(0,Y-xl.rowY[j])}, w, h});
+        } else if (b.f==="check"){
+          if (!state.cvals[cvalKey(t,b)]) continue;
+          const m = home(b), w = cur(m.r, m.c), n = order(b, m);
+          const pos = []; [...w.text].forEach((ch,i)=>{ if (BOXCH.test(ch) || ch==="☑") pos.push(i); });
+          const ctrl = (xl.ctrls||[]).filter(k=>{ const cx = k.x + k.w/2, cy = k.y + k.h/2; return cx > b.x - 1 && cx < b.x + b.w + 1 && cy > b.y - .8 && cy < b.y + b.h + .8; })
+            .sort((p,q)=>Math.abs(p.x - b.x) - Math.abs(q.x - b.x))[0];
+          if (ctrl) checkedSp.add(String(ctrl.spid));
+          else if (pos.length && n >= 0 && n < pos.length){ const a = [...w.text]; a[pos[n]] = "☑"; w.text = a.join(""); w.dirty = true; }
+          else if (!w.text.trim()){ w.text = "✓"; w.dirty = true; w.filled = true; }
+          else shapeAt(xl, b.x, b.y, Math.max(b.w, 2), b.h, {kind:"text", text:"✓", pt:ptOf(xl, b.h*pg.ratio*1.1), color:"CC0000", bold:true, anchor:"ctr"});
+        } else if (b.f==="maru"){
+          if (state.cvals[cvalKey(t,b)]===b.opt) shapeAt(xl, b.x, b.y, b.w, b.h, {kind:"ellipse"});
+        } else if (b.f==="free"){
+          writeText(b, state.cvals[cvalKey(t,b)], FONT[b.size||"s"]);
+        } else {
+          writeText(b, def.slot ? (photo ? (b.f==="place" ? photo.place : photo.comment) : "") : fieldText(b.f), FONT[b.size||"m"]);
+        }
+      }
+      /* 仕上がり画面で自由に書き込んだ文字・○・✓ */
+      for (const n of state.notes.filter(n=>n.tid===t.id && n.pi===o.pi)){
+        if (n.kind==="text"){ const ls = String(n.text||"").split("\n"), hp = 1.7*1.3*ls.length/pg.ratio; shapeAt(xl, n.x, n.y - hp/2, Math.max(4, Math.max(...ls.map(l=>l.length))*1.8), hp, {kind:"text", text:n.text||"", pt:ptOf(xl, 1.7), color:"CC0000", anchor:"ctr"}); }
+        else if (n.kind==="check") shapeAt(xl, n.x - 1.5, n.y - 1.5/pg.ratio, 3, 3/pg.ratio, {kind:"text", text:"✓", pt:ptOf(xl, 2.4), color:"CC0000", bold:true, anchor:"ctr", center:true});
+        else shapeAt(xl, n.x - 1.5, n.y - 1.5/pg.ratio, 3, 3/pg.ratio, {kind:"ellipse"});
+      }
+    }
+    for (const w of work.values()) if (w.dirty) setText(cellEl(w.r, w.c, true), w.text);
+
+    const srels = readRelsOf(path);
+    /* 貼り付け型のチェックボックスにチェックを入れる */
+    if (checkedSp.size){
+      const vrel = srels.find(r=>/vmlDrawing$/.test(r.type));
+      if (vrel && files.has(vrel.target)){
+        put(vrel.target, get(vrel.target).replace(/<v:shape\b[\s\S]*?<\/v:shape>/g, sx=>{
+          const id = (/\bid="_x0000_s(\d+)"/.exec(sx)||[])[1];
+          if (!id || !checkedSp.has(id) || /<x:Checked>/.test(sx)) return sx;
+          return sx.replace(/<\/x:ClientData>/, "<x:Checked>1</x:Checked></x:ClientData>");
+        }));
+      }
+      [...root.getElementsByTagName("*")].filter(e=>e.localName==="control" && checkedSp.has(e.getAttribute("shapeId"))).forEach(e=>{
+        const rid = e.getAttribute("r:id") || e.getAttributeNS(RNS, "id"), rel = srels.find(r=>r.id===rid);
+        if (rel && files.has(rel.target)){ const cp = get(rel.target); if (!/\bchecked=/.test(cp)) put(rel.target, cp.replace(/<formControlPr\b/, '<formControlPr checked="Checked"')); }
+      });
+    }
+    /* ○・重ね書きの文字・写真は、図形としてシートに置く */
+    if (shapes.length || pics.length){
+      const XDR = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing", A = "http://schemas.openxmlformats.org/drawingml/2006/main", E = v=>Math.round(v*9525);
+      let dpath = (srels.find(r=>/\/drawing$/.test(r.type))||{}).target;
+      if (!dpath || !files.has(dpath)){
+        let k = 1; while (files.has(`xl/drawings/drawingHk${k}.xml`)) k++;
+        dpath = `xl/drawings/drawingHk${k}.xml`;
+        put(dpath, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<xdr:wsDr xmlns:xdr="${XDR}" xmlns:a="${A}"></xdr:wsDr>`);
+        addType(`<Override PartName="/${dpath}" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`);
+        const rid = "rIdHk" + k; addRel(path, rid, RNS + "/drawing", "/" + dpath);
+        const dEl = doc.createElementNS(NS, "drawing"); dEl.setAttributeNS(RNS, "r:id", rid);
+        const LATER = ["legacyDrawing","legacyDrawingHF","drawingHF","picture","oleObjects","controls","webPublishItems","tableParts","extLst","AlternateContent"];
+        root.insertBefore(dEl, [...root.children].find(e=>LATER.includes(e.localName)) || null);
+      }
+      const anchor = (a, w, h, inner)=>`<xdr:oneCellAnchor xmlns:xdr="${XDR}" xmlns:a="${A}"><xdr:from><xdr:col>${a.c-1}</xdr:col><xdr:colOff>${E(a.dx)}</xdr:colOff><xdr:row>${a.r-1}</xdr:row><xdr:rowOff>${E(a.dy)}</xdr:rowOff></xdr:from><xdr:ext cx="${E(w)}" cy="${E(h)}"/>${inner}<xdr:clientData/></xdr:oneCellAnchor>`;
+      const xfrm = (w,h)=>`<a:xfrm><a:off x="0" y="0"/><a:ext cx="${E(w)}" cy="${E(h)}"/></a:xfrm>`;
+      let add = "";
+      for (const sh of shapes){
+        const id = 90000 + (++uid);
+        const nv = `<xdr:nvSpPr><xdr:cNvPr id="${id}" name="記入 ${uid}"/><xdr:cNvSpPr/></xdr:nvSpPr>`;
+        if (sh.kind==="ellipse") add += anchor(sh.a, sh.w, sh.h, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:noFill/><a:ln w="15875"><a:solidFill><a:srgbClr val="CC0000"/></a:solidFill></a:ln></xdr:spPr></xdr:sp>`);
+        else {
+          const rpr = `<a:rPr lang="ja-JP" altLang="en-US" sz="${Math.round(sh.pt*100)}"${sh.bold?' b="1"':""}><a:solidFill><a:srgbClr val="${sh.color}"/></a:solidFill></a:rPr>`;
+          const ps = String(sh.text).split("\n").map(l=>`<a:p><a:pPr algn="${sh.center?"ctr":"l"}"/><a:r>${rpr}<a:t>${xesc(l)}</a:t></a:r></a:p>`).join("");
+          add += anchor(sh.a, sh.w, sh.h, `<xdr:sp macro="" textlink="">${nv}<xdr:spPr>${xfrm(sh.w,sh.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></xdr:spPr><xdr:txBody><a:bodyPr vertOverflow="overflow" horzOverflow="overflow" wrap="${sh.wrap?"square":"none"}" lIns="18000" tIns="0" rIns="0" bIns="0" anchor="${sh.anchor||"ctr"}"/><a:lstStyle/>${ps}</xdr:txBody></xdr:sp>`);
+        }
+      }
+      for (const pc of pics){
+        const id = 90000 + (++uid); let k = 1; while (files.has(`xl/media/hk${k}.jpeg`)) k++;
+        files.set(`xl/media/hk${k}.jpeg`, new Uint8Array(await urlToBlob(pc.src).arrayBuffer()));
+        addType('<Default Extension="jpeg" ContentType="image/jpeg"/>');
+        const rid = "rIdHkP" + uid; addRel(dpath, rid, RNS + "/image", `/xl/media/hk${k}.jpeg`);
+        add += anchor(pc.a, pc.w, pc.h, `<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="写真 ${uid}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r="${RNS}" r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>${xfrm(pc.w,pc.h)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>`);
+      }
+      const dx = get(dpath), cut = dx.lastIndexOf("</");
+      put(dpath, dx.slice(0, cut) + add + dx.slice(cut));
+    }
+    put(path, ser(doc));
+  }
+  /* 計算式を消したマスがあるときは、計算の順番の控えを外す（残すとExcelが「修復」を求める） */
+  if (removedFormula && files.has("xl/calcChain.xml")){
+    files.delete("xl/calcChain.xml");
+    put("[Content_Types].xml", get("[Content_Types].xml").replace(/<Override[^>]*calcChain[^>]*\/>/, ""));
+    const wr = "xl/_rels/workbook.xml.rels"; if (files.has(wr)) put(wr, get(wr).replace(/<Relationship[^>]*calcChain[^>]*\/>/, ""));
+  }
+  return zipWrite(files);
+}
 async function xlsxToPages(file){
   if (!window.ExcelJS) await loadLib("vendor/exceljs.min.js", "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
   const wb = new ExcelJS.Workbook();
   const buf = await file.arrayBuffer();
+  const buf0 = buf.slice(0), fid = "x"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   const extras = await readXlsxExtras(buf.slice(0));
   await wb.xlsx.load(buf);
   const pages = [];
@@ -2227,10 +2488,12 @@ async function xlsxToPages(file){
       const W = p.canvas.width, H = p.canvas.height;
       const inImg = b => p.imgs.some(im=>{ const cx = (b.x + b.w/2)/100*W, cy = (b.y + b.h/2)/100*H; return cx > im.x && cx < im.x+im.w && cy > im.y && cy < im.y+im.h; });
       const boxes = detectBoxes({items:p.items}, p.vp, p.canvas).filter(b=>!inImg(b));
-      pages.push({bg:p.canvas.toDataURL("image/jpeg",.85), ratio:p.canvas.height/p.canvas.width, boxes});
+      pages.push({bg:p.canvas.toDataURL("image/jpeg",.85), ratio:p.canvas.height/p.canvas.width, boxes, xl:{...p.xl, fid}});
     }
   }
   if (!pages.length) throw new Error("empty");
+  /* 元のExcelそのものも型に持たせる（Excel出力のとき、このファイルのマスに書き込む） */
+  if (buf0.byteLength <= 8*1024*1024) pages.xfile = {id:fid, name:file.name||"", data:await blobToUrl(new Blob([buf0], {type:"application/octet-stream"}))};
   return pages;
 }
 function sheetToPages(ws, wb, extra){
@@ -2338,7 +2601,7 @@ function sheetToPages(ws, wb, extra){
       x.restore();
     }
     /* 4. 画像（ロゴなど）の置き場所を覚えておく（読み込みに時間がかかるので後で描く） */
-    const imgs = [];
+    const imgs = [], ctrls = [];
     try{
       const fx = (col)=>{ const i = Math.floor(col)+1, fr = col - Math.floor(col); if (i < area.c1 || i > area.c2) return null; return M + (X(i) + fr*(X(i+1)-X(i)))*s; };
       const fy = (row)=>{ const i = Math.floor(row)+1, fr = row - Math.floor(row); if (i < rs || i > re+1) return null; return M + (Y(i) - oy + fr*((Y(i+1)||Y(i))-Y(i)))*s; };
@@ -2363,6 +2626,7 @@ function sheetToPages(ws, wb, extra){
           const label = sh.text.replace(/\n/g," ");
           if (label) x.fillText(label, bx + fs*1.3, by + fs*0.88);
           items.push({str:"□"+label, transform:[fs,0,0,fs,bx,by + fs*0.88], width:fs*1.3 + x.measureText(label).width});
+          if (sh.kind==="Checkbox" && sh.spid) ctrls.push({spid:sh.spid, x:bx/CW*100, y:by/PH*100, w:fs/CW*100, h:fs/PH*100});
           continue;
         }
         if (sh.kind==="Line"){ x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke(); continue; }
@@ -2393,7 +2657,9 @@ function sheetToPages(ws, wb, extra){
       });
     }catch(e){}
     const vp = {width:CW, height:PH, convertToViewportPoint:(a,b)=>[a,b]};
-    pages.push({canvas:c, items, vp, imgs});
+    /* あとで取引先のExcelに書き戻せるよう、紙の上の位置とセルの対応を覚えておく */
+    const xl = {sheet:ws.name, M, s:+s.toFixed(5), CW, PH, oy:+oy.toFixed(2), c1:area.c1, r1:area.r1, colX:colX.map(v=>+v.toFixed(2)), rowY:rowY.map(v=>+v.toFixed(2)), ctrls};
+    pages.push({canvas:c, items, vp, imgs, xl});
   });
   return pages;
 }
@@ -2427,6 +2693,7 @@ edEl("editor").addEventListener("change", async e=>{
     edEl("ed_msg").textContent = "読み込み中…";
     try{
       const pages = await fileToPages(f);
+      if (pages.xfile && !(ed.type.xfile && ed.type.pages.some(p=>p.xl && p.xl.fid===ed.type.xfile.id))) ed.type.xfile = pages.xfile;
       ed.type.pages.push(...pages); ed.page = ed.type.pages.length - pages.length;
       ed.type.repeat = ed.type.pages.length - 1;
       const found = pages.reduce((a,p)=>a + p.boxes.length, 0);
