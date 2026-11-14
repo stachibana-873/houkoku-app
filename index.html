@@ -296,7 +296,7 @@ input.inplace{height:auto;min-height:100%}
 #printPages{display:none}
 .dlopt{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:10px 12px;height:auto;white-space:normal}
 .dlopt small{font-weight:400;font-size:12px;opacity:.85}
-@page{size:A4;margin:0}
+@page{size:A4;margin:10mm 7mm}
 @media print{
   body{background:#fff;padding:0}
   .top,.panel,.pvhead,.mtabs,#tapHint,#tapHint2{display:none!important}
@@ -307,9 +307,10 @@ input.inplace{height:auto;min-height:100%}
   body.altprint #pages{display:none!important}
   body.altprint #printPages{display:block}
   .pdlg{display:none!important}
-  /* iPad・iPhoneは紙の高さぴったりだと少しはみ出したと判断して白紙を挟むので、ほんの少し低くして、はみ出しは切る */
+  /* iPad・iPhoneは余白の設定を無視して自分で余白を付けるため、紙いっぱいの大きさだと1ページに収まらず白紙を挟む。
+     どの端末でも収まるよう、紙より一回り小さく（上下左右に約7〜10mmの余白）作って中央に置く */
   html,body{margin:0!important;padding:0!important}
-  .page{width:210mm;height:296mm;max-width:none;aspect-ratio:auto;box-shadow:none;overflow:hidden;margin:0!important;break-after:page;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .page{width:195mm;height:275mm;margin:0 auto!important;max-width:none;aspect-ratio:auto;box-shadow:none;overflow:hidden;break-after:page;break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   #pages > .page:last-child,#printPages > .page:last-child{break-after:auto}
 }
 </style>
