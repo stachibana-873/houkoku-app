@@ -1970,15 +1970,110 @@ function parseRange(a){
   const [p,q] = String(a).split("!").pop().split(":"); const s = parseRef(p), e = parseRef(q||p);
   return s && e ? {r1:Math.min(s.r,e.r), c1:Math.min(s.c,e.c), r2:Math.max(s.r,e.r), c2:Math.max(s.c,e.c)} : null;
 }
+/* ---------- Excelの中の図形・チェックボックスを読む ----------
+   ExcelJSはセルしか読めないので、xlsx（中身はzip）を自分で開いて、
+   チェックボックス（フォームコントロール）や図形の文字・位置を取り出す */
+async function unzipEntries(buf){
+  const u8 = new Uint8Array(buf), dv = new DataView(buf), out = {};
+  let e = u8.length - 22; while (e >= 0 && dv.getUint32(e, true) !== 0x06054b50) e--;
+  if (e < 0) return out;
+  const n = dv.getUint16(e+10, true); let p = dv.getUint32(e+16, true);
+  const td = new TextDecoder();
+  for (let i=0; i<n; i++){
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p+10, true), csize = dv.getUint32(p+20, true);
+    const nl = dv.getUint16(p+28, true), el = dv.getUint16(p+30, true), cl = dv.getUint16(p+32, true), lo = dv.getUint32(p+42, true);
+    const name = td.decode(u8.subarray(p+46, p+46+nl));
+    out[name] = {method, csize, lo};
+    p += 46 + nl + el + cl;
+  }
+  out.__read = async name=>{
+    const f = out[name]; if (!f) return null;
+    const lnl = dv.getUint16(f.lo+26, true), lel = dv.getUint16(f.lo+28, true), st = f.lo + 30 + lnl + lel;
+    const data = u8.subarray(st, st + f.csize);
+    if (f.method === 0) return td.decode(data);
+    const ds = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return await new Response(ds).text();
+  };
+  return out;
+}
+const xmlDoc = s => new DOMParser().parseFromString(s, "application/xml");
+const relPath = (base, t) => { if (t.startsWith("/")) return t.slice(1); const parts = base.split("/"); parts.pop(); t.split("/").forEach(x=>{ if (x==="..") parts.pop(); else if (x!==".") parts.push(x); }); return parts.join("/"); };
+async function readRels(z, path){
+  const dir = path.split("/"); const f = dir.pop(); const rp = [...dir, "_rels", f+".rels"].join("/");
+  const s = await z.__read(rp); if (!s) return [];
+  return [...xmlDoc(s).getElementsByTagName("Relationship")].map(r=>({id:r.getAttribute("Id"), type:r.getAttribute("Type")||"", target:relPath(path, r.getAttribute("Target")||"")}));
+}
+/* シート名ごとに、チェックボックスと図形の一覧を返す
+   位置は「列番号(0始まり)＋列内のずれ(px)」「行番号(0始まり)＋行内のずれ(px)」で表す */
+async function readXlsxExtras(buf){
+  const res = {};
+  try{
+    const z = await unzipEntries(buf);
+    const wbx = await z.__read("xl/workbook.xml"); if (!wbx) return res;
+    const wrels = await readRels(z, "xl/workbook.xml");
+    const sheets = [...xmlDoc(wbx).getElementsByTagName("sheet")];
+    for (const sh of sheets){
+      const rid = sh.getAttribute("r:id") || sh.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships","id");
+      const rel = wrels.find(r=>r.id===rid); if (!rel) continue;
+      const list = []; res[sh.getAttribute("name")] = list;
+      const srels = await readRels(z, rel.target);
+      for (const r of srels){
+        if (/vmlDrawing$/.test(r.type)){
+          const v = await z.__read(r.target); if (!v) continue;
+          /* VMLは厳密なXMLでないことがあるので、文字列から拾う */
+          for (const m of v.matchAll(/<v:shape\b[\s\S]*?<\/v:shape>/g)){
+            const sx = m[0];
+            const ot = (/ObjectType="(\w+)"/.exec(sx)||[])[1]; if (!ot || ot==="Note") continue;
+            const an = (/<x:Anchor>\s*([\d,\s]+)<\/x:Anchor>/.exec(sx)||[])[1]; if (!an) continue;
+            const a = an.split(",").map(t=>+t.trim());
+            let text = ((/<v:textbox[^>]*>([\s\S]*?)<\/v:textbox>/.exec(sx)||[])[1]||"").replace(/<br\s*\/?>/gi,"\n").replace(/<[^>]+>/g,"").replace(/&nbsp;/g," ").replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").trim();
+            const checked = /<x:Checked>\s*1/.test(sx);
+            const fsz = (/<font[^>]*\bsize="(\d+)"/.exec(sx)||[])[1];
+            list.push({kind:ot, text, checked, size: fsz ? +fsz/20 : null, from:{c:a[0], dx:a[1], r:a[2], dy:a[3]}, to:{c:a[4], dx:a[5], r:a[6], dy:a[7]}});
+          }
+        }
+        if (/\/drawing$/.test(r.type)){
+          const d = await z.__read(r.target); if (!d) continue;
+          const doc = xmlDoc(d);
+          const anchors = [...doc.getElementsByTagName("*")].filter(el=>el.localName==="twoCellAnchor" || el.localName==="oneCellAnchor");
+          const kid = (el, name) => [...el.children].find(c=>c.localName===name);
+          const pos = el => el ? {c:+kid(el,"col").textContent, dx:+kid(el,"colOff").textContent/9525, r:+kid(el,"row").textContent, dy:+kid(el,"rowOff").textContent/9525} : null;
+          for (const an of anchors){
+            const from = pos(kid(an,"from")); let to = pos(kid(an,"to"));
+            const ext = kid(an,"ext");
+            const shapes = [...an.getElementsByTagName("*")].filter(el=>el.localName==="sp" || el.localName==="cxnSp");
+            for (const sp of shapes){
+              /* チェックボックスなどのフォームコントロールは、Excelが同じものをVML側にも持っている。
+                 図形側は隠し(hidden)の写しなので、二重に描かないよう飛ばす */
+              const nv = [...sp.getElementsByTagName("*")].find(el=>el.localName==="cNvPr");
+              if (nv && (nv.getAttribute("hidden")==="1" || nv.getAttribute("hidden")==="true")) continue;
+              if ([...sp.getElementsByTagName("*")].some(el=>el.localName==="compatExt")) continue;
+              const txt = [...sp.getElementsByTagName("*")].filter(el=>el.localName==="p").map(p=>[...p.getElementsByTagName("*")].filter(t=>t.localName==="t").map(t=>t.textContent).join("")).join("\n").trim();
+              const geom = ([...sp.getElementsByTagName("*")].find(el=>el.localName==="prstGeom")||{getAttribute:()=>""}).getAttribute("prst") || "";
+              const ln = [...sp.getElementsByTagName("*")].find(el=>el.localName==="ln");
+              const noLine = ln && [...ln.children].some(c=>c.localName==="noFill");
+              const fontSz = ([...sp.getElementsByTagName("*")].find(el=>el.localName==="rPr" && el.getAttribute("sz"))||{getAttribute:()=>null}).getAttribute("sz");
+              list.push({kind:sp.localName==="cxnSp" ? "Line" : "Shape", geom, text:txt, outline:!noLine, size:fontSz ? +fontSz/100 : null, from, to, ext: ext ? {w:+ext.getAttribute("cx")/9525, h:+ext.getAttribute("cy")/9525} : null});
+            }
+          }
+        }
+      }
+    }
+  }catch(e){}
+  return res;
+}
 async function xlsxToPages(file){
   if (!window.ExcelJS) await loadLib("vendor/exceljs.min.js", "https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(await file.arrayBuffer());
+  const buf = await file.arrayBuffer();
+  const extras = await readXlsxExtras(buf.slice(0));
+  await wb.xlsx.load(buf);
   const pages = [];
   for (const ws of wb.worksheets){
     if (pages.length >= 4) break;
     if (ws.state && ws.state !== "visible") continue;
-    const pg = sheetToPages(ws, wb);
+    const pg = sheetToPages(ws, wb, extras[ws.name] || []);
     for (const p of pg.slice(0, 4 - pages.length)){
       const x = p.canvas.getContext("2d");
       for (const im of p.imgs){
@@ -1998,7 +2093,7 @@ async function xlsxToPages(file){
   if (!pages.length) throw new Error("empty");
   return pages;
 }
-function sheetToPages(ws, wb){
+function sheetToPages(ws, wb, extra){
   /* 範囲：印刷範囲があればそれ、なければ文字・罫線・塗りのあるセルの範囲 */
   let area = ws.pageSetup && ws.pageSetup.printArea ? parseRange(ws.pageSetup.printArea.split(",")[0]) : null;
   if (!area){
@@ -2107,6 +2202,46 @@ function sheetToPages(ws, wb){
     try{
       const fx = (col)=>{ const i = Math.floor(col)+1, fr = col - Math.floor(col); if (i < area.c1 || i > area.c2) return null; return M + (X(i) + fr*(X(i+1)-X(i)))*s; };
       const fy = (row)=>{ const i = Math.floor(row)+1, fr = row - Math.floor(row); if (i < rs || i > re+1) return null; return M + (Y(i) - oy + fr*((Y(i+1)||Y(i))-Y(i)))*s; };
+      /* チェックボックス・図形：位置を紙の上の座標に直して描く */
+      const ax = (p)=>{ const i = p.c+1; if (i < area.c1 || i > area.c2+1) return null; return M + ((X(i) ?? colX[colX.length-1]) + p.dx)*s; };
+      const ay = (p)=>{ const i = p.r+1; if (i < rs || i > re+1) return null; return M + ((Y(i) ?? rowY[rowY.length-1]) - oy + p.dy)*s; };
+      for (const sh of extra){
+        const x1 = ax(sh.from), y1 = ay(sh.from); if (x1===null || y1===null) continue;
+        let x2 = sh.to ? ax(sh.to) : null, y2 = sh.to ? ay(sh.to) : null;
+        if ((x2===null || y2===null) && sh.ext){ x2 = x1 + sh.ext.w*s; y2 = y1 + sh.ext.h*s; }
+        if (x2===null || y2===null) continue;
+        const h = y2 - y1, w = x2 - x1;
+        x.strokeStyle = "#000"; x.fillStyle = "#111"; x.lineWidth = 1.2;
+        if (sh.kind==="Checkbox" || sh.kind==="Radio"){
+          /* □（または○）＋文字として描き、チェック欄として拾えるように「□名前」の文字にする */
+          const fs = Math.max(8, Math.min(h*0.8, (sh.size || 9)*P*s*1.1));
+          const bx = x1 + 2, by = y1 + (h - fs)/2;
+          x.font = `${fs}px "BIZ UDPGothic","Hiragino Sans","Yu Gothic","Meiryo",sans-serif`;
+          x.save(); x.fillStyle = "#fff"; x.fillRect(bx-1, by-1, fs+2, fs+2); x.restore();
+          if (sh.kind==="Radio"){ x.beginPath(); x.arc(bx+fs/2, by+fs/2, fs/2, 0, 7); x.stroke(); }
+          else x.strokeRect(bx, by, fs, fs);
+          const label = sh.text.replace(/\n/g," ");
+          if (label) x.fillText(label, bx + fs*1.3, by + fs*0.88);
+          items.push({str:"□"+label, transform:[fs,0,0,fs,bx,by + fs*0.88], width:fs*1.3 + x.measureText(label).width});
+          continue;
+        }
+        if (sh.kind==="Line"){ x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke(); continue; }
+        if (sh.kind==="Shape"){
+          if (sh.outline && w > 2 && h > 2){
+            if (/ellipse/.test(sh.geom)){ x.beginPath(); x.ellipse(x1+w/2, y1+h/2, w/2, h/2, 0, 0, 7); x.stroke(); }
+            else if (/line/.test(sh.geom)){ x.beginPath(); x.moveTo(x1,y1); x.lineTo(x2,y2); x.stroke(); }
+            else if (!sh.text || /rect/.test(sh.geom)) x.strokeRect(x1, y1, w, h);
+          }
+          if (sh.text){
+            const fs = Math.max(7, (sh.size || 11) * P * s);
+            x.font = `${fs}px "BIZ UDPGothic","Hiragino Sans","Yu Gothic","Meiryo",sans-serif`;
+            sh.text.split("\n").forEach((L,k)=>{ const ty = y1 + 3 + fs*0.88 + k*fs*1.25; x.fillText(L, x1 + 4, ty); if (L.trim()) items.push({str:L, transform:[fs,0,0,fs,x1+4,ty], width:x.measureText(L).width}); });
+          } else if (sh.outline && Math.abs(w-h) < Math.max(w,h)*0.25 && w < 40*s){
+            /* 文字のない小さな四角＝手書きのチェック欄。右隣の文字と合わせて拾えるよう「□」を置く */
+            items.push({str:"□", transform:[h,0,0,h,x1,y1 + h*0.88], width:w});
+          }
+        }
+      }
       (ws.getImages ? ws.getImages() : []).forEach(im=>{
         const media = wb.getImage(+im.imageId), tl = im.range && im.range.tl; if (!media || !tl) return;
         const x1 = fx(tl.col), y1 = fy(tl.row); if (x1===null || y1===null) return;
