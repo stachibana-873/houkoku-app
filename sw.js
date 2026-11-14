@@ -1,7 +1,7 @@
 /* 電波がない現場でもアプリを開けるようにするための仕組み（Service Worker）。
    アプリ本体と部品を端末に取っておき、つながらないときはそれを使う。
    アプリを更新したら VERSION を変える */
-const VERSION = "houkoku-v19";
+const VERSION = "houkoku-v20";
 const CORE = ["./", "index.html", "manual.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png",
   "vendor/exceljs.min.js", "vendor/pdf.min.js", "vendor/pdf.worker.min.js"];
 self.addEventListener("install", e=>{
@@ -16,7 +16,7 @@ self.addEventListener("fetch", e=>{
   const url = new URL(req.url);
   /* アプリのページ：つながるときは最新を取り、つながらないときは取っておいたものを出す */
   if (req.mode === "navigate"){
-    e.respondWith(fetch(req).then(r=>{ const c = r.clone(); caches.open(VERSION).then(x=>x.put(req, c)); return r; })
+    e.respondWith(fetch(req, {cache:"no-cache"}).then(r=>{ const c = r.clone(); caches.open(VERSION).then(x=>x.put(req, c)); return r; })
       .catch(()=>caches.match(req, {ignoreSearch:true}).then(r=>r || caches.match("index.html"))));
     return;
   }
