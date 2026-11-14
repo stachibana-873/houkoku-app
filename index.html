@@ -1103,6 +1103,7 @@ async function openReport(id){
   if (isCustom(state.template) && !typeOf(state.template)) state.template = "list4";
   uid = Math.max(uid, 0, ...state.photos.map(p=>p.id), ...state.checks.map(c=>c.id));
   if (state._sampleCompany){ state.company = {}; delete state._sampleCompany; }
+  syncLink();   /* 以前に書いた報告事項も、開いたときに写真側とそろえる */
   setCurrent(id);
   document.getElementById("sampleNotice").hidden = true;
   document.getElementById("rlist").hidden = true;
@@ -2850,6 +2851,7 @@ if (!inFrameNow && location.protocol!=="file:") document.getElementById("manualL
   if (draft && draft.photos){
     Object.assign(state, {cvals:{}, notes:[]}, draft, {sample:false});
     uid = Math.max(0, ...state.photos.map(p=>p.id), ...state.checks.map(c=>c.id));
+    syncLink();
     document.getElementById("noticeText").innerHTML = "前回の続きを表示しています。別の報告書は下の一覧から開けます。";
   } else {
     loadSample();
