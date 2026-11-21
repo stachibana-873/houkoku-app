@@ -1,4 +1,5 @@
 <!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>写真報告書メーカー 使い方</title>
+<link rel="icon" href="icons/icon-192.png"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap">
@@ -39,6 +40,9 @@ a{color:var(--accent)}
 
 /* ヒーロー（生成りの帯） */
 .hero{background:var(--cream)}
+.hero .wrap{position:relative}
+.hero .mascot{width:120px;height:126px;justify-self:start}
+@media (min-width:760px){.hero .wrap{padding-right:240px}.hero .mascot{position:absolute;right:24px;top:50%;transform:translateY(-50%);width:200px;height:210px}}
 .hero .wrap{padding-block:44px 48px;display:grid;gap:18px}
 .crumbs{display:flex;flex-wrap:wrap;gap:6px 10px;font-size:13px;color:var(--accent);margin:0;padding:0;list-style:none}
 .crumbs li+li::before{content:"/";color:var(--muted);margin-right:10px}
@@ -133,6 +137,29 @@ footer .wrap{padding-block:24px 32px;display:flex;flex-wrap:wrap;justify-content
 
 <div class="hero"><div class="wrap">
   <ul class="crumbs"><li>無料・登録なし</li><li>写真は端末の外に出ません</li><li>Chrome推奨</li></ul>
+  <svg class="mascot" viewBox="12 18 222 214" role="img" aria-label="レポまる"><ellipse cx="120" cy="222" rx="62" ry="8" fill="#1F2A44" opacity="0.08"></ellipse>
+<path d="M60 140 Q36 150 34 122" stroke="#2F5BC4" stroke-width="10" fill="none" stroke-linecap="round"></path>
+<path d="M180 140 Q204 132 206 108" stroke="#2F5BC4" stroke-width="10" fill="none" stroke-linecap="round"></path>
+<g transform="rotate(20 206 90)"><rect x="200" y="52" width="12" height="42" rx="2" fill="#F5B23D"></rect><path d="M200 94 L212 94 L206 108 Z" fill="#F3D9A8"></path><path d="M204 103 L208 103 L206 108 Z" fill="#1F2A44"></path></g>
+<rect x="92" y="198" width="13" height="20" rx="6" fill="#2F5BC4"></rect>
+<rect x="135" y="198" width="13" height="20" rx="6" fill="#2F5BC4"></rect>
+<rect x="56" y="40" width="128" height="166" rx="20" fill="#3B6FE0"></rect>
+<rect x="68" y="56" width="104" height="138" rx="10" fill="#FFFFFF"></rect>
+<rect x="94" y="28" width="52" height="24" rx="9" fill="#9DB4E8"></rect>
+<circle cx="120" cy="36" r="4" fill="#3B6FE0"></circle>
+<circle cx="102" cy="86" r="6.5" fill="#1F2A44"></circle>
+<circle cx="138" cy="86" r="6.5" fill="#1F2A44"></circle>
+<circle cx="104" cy="84" r="2" fill="#FFFFFF"></circle>
+<circle cx="140" cy="84" r="2" fill="#FFFFFF"></circle>
+<ellipse cx="89" cy="101" rx="7" ry="4" fill="#FFB8B8"></ellipse>
+<ellipse cx="151" cy="101" rx="7" ry="4" fill="#FFB8B8"></ellipse>
+<path d="M110 100 Q120 110 130 100" stroke="#1F2A44" stroke-width="3.5" fill="none" stroke-linecap="round"></path>
+<path d="M80 131 l5 5 l9 -10" stroke="#2BB673" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+<rect x="102" y="129" width="56" height="5" rx="2.5" fill="#D5DDF0"></rect>
+<path d="M80 153 l5 5 l9 -10" stroke="#2BB673" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
+<rect x="102" y="151" width="46" height="5" rx="2.5" fill="#D5DDF0"></rect>
+<rect x="80" y="170" width="13" height="13" rx="3" fill="none" stroke="#C3CDE3" stroke-width="2.5"></rect>
+<rect x="102" y="174" width="36" height="5" rx="2.5" fill="#D5DDF0"></rect></svg>
   <span class="eyebrow">User Guide</span>
   <h1>写真報告書メーカー<br>使い方マニュアル</h1>
   <p>現場で撮った写真を選んで、テンプレートに並べて、コメントを書くだけ。施工報告書をPDFやExcelで仕上げるまでの使い方をまとめました。iPhone・Android・パソコンのどれでも使えます。</p>
