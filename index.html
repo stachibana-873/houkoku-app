@@ -34,8 +34,11 @@ h1{font-size:22px;margin:0;text-wrap:balance}
 .top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;max-width:1280px;margin:0 auto 16px;
   background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:18px 20px}
 .top .brand{display:flex;align-items:center;gap:14px;min-width:0}
-.top .mascot{flex:none;width:76px;height:80px}
-@media (max-width:520px){.top .mascot{width:58px;height:61px}}
+.top .mascot{flex:none;margin:0;display:flex;flex-direction:column;align-items:center;gap:2px}
+.mascot-img{display:block;width:72px;height:70px}
+.mascot figcaption{font-size:11px;font-weight:700;line-height:1.2;text-align:center;color:var(--fg);white-space:nowrap}
+.mascot figcaption small{display:block;font-size:9px;font-weight:700;color:var(--accent);letter-spacing:.08em}
+@media (max-width:520px){.mascot-img{width:56px;height:54px}}
 .top .eyebrow{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.14em;margin:0 0 2px}
 h1{font-weight:700}
 .top p{margin:2px 0 0;color:var(--muted);font-size:13px}
@@ -328,7 +331,7 @@ input.inplace{height:auto;min-height:100%}
 
 <header class="top">
   <div class="brand">
-  <svg class="mascot" viewBox="12 18 222 214" role="img" aria-label="レポまる"><ellipse cx="120" cy="222" rx="62" ry="8" fill="#1F2A44" opacity="0.08"></ellipse>
+  <figure class="mascot"><svg class="mascot-img" viewBox="12 18 222 214" aria-hidden="true"><ellipse cx="120" cy="222" rx="62" ry="8" fill="#1F2A44" opacity="0.08"></ellipse>
 <path d="M60 140 Q36 150 34 122" stroke="#2F5BC4" stroke-width="10" fill="none" stroke-linecap="round"></path>
 <path d="M180 140 Q204 132 206 108" stroke="#2F5BC4" stroke-width="10" fill="none" stroke-linecap="round"></path>
 <g transform="rotate(20 206 90)"><rect x="200" y="52" width="12" height="42" rx="2" fill="#F5B23D"></rect><path d="M200 94 L212 94 L206 108 Z" fill="#F3D9A8"></path><path d="M204 103 L208 103 L206 108 Z" fill="#1F2A44"></path></g>
@@ -350,11 +353,11 @@ input.inplace{height:auto;min-height:100%}
 <path d="M80 153 l5 5 l9 -10" stroke="#2BB673" stroke-width="4" fill="none" stroke-linecap="round" stroke-linejoin="round"></path>
 <rect x="102" y="151" width="46" height="5" rx="2.5" fill="#D5DDF0"></rect>
 <rect x="80" y="170" width="13" height="13" rx="3" fill="none" stroke="#C3CDE3" stroke-width="2.5"></rect>
-<rect x="102" y="174" width="36" height="5" rx="2.5" fill="#D5DDF0"></rect></svg>
+<rect x="102" y="174" width="36" height="5" rx="2.5" fill="#D5DDF0"></rect></svg><figcaption><small>案内役</small>レポまる</figcaption></figure>
   <div>
     <div class="eyebrow">PHOTO REPORT</div>
     <h1>写真報告書メーカー</h1>
-    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 25</small></p>
+    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 26</small></p>
   </div>
   </div>
   <div class="tplsub">
