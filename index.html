@@ -3,37 +3,41 @@
 <meta name="claude:viewport-fit-sides" content="cover">
 <!-- 公開版：ホーム画面に追加するとアプリのように開け、電波がなくても動く -->
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#1f4e79">
+<meta name="theme-color" content="#ce5e30">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
 <style>
 /* 左に入力パネル、右に実寸A4のプレビュー。スマホでは縦に積む */
 :root{
-  --bg:#eef1f4; --panel:#ffffff; --fg:#1b2430; --muted:#5d6b7a; --line:#d5dbe2;
-  --accent:#1f4e79; --accent-fg:#ffffff; --accent-soft:#e3ecf5; --danger:#b3261e;
+  /* 配色は株式会社プレイスのホームページ（人材事業ページ）に合わせている */
+  --bg:#faf7f4; --panel:#ffffff; --fg:#2f2622; --muted:#6f6763; --line:#e5e5e5;
+  --accent:#ce5e30; --accent-fg:#ffffff; --accent-soft:#faf1ec; --danger:#b3261e; --sub:#3e6f8e;
   /* 報告書（紙）はテーマに関係なく白い紙のまま */
   --paper:#ffffff; --ink:#1a1a1a; --ink-muted:#555; --rule:#9aa3ad; --photo-bg:#f1f2f3; --navy:#1f4e79; --dark:#333;
   --ui:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",system-ui,sans-serif;
   --doc:"BIZ UDPGothic","Hiragino Sans","Yu Gothic","Meiryo",sans-serif;
 }
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#12171d; --panel:#1b222b; --fg:#e4e9ef; --muted:#9aa7b4; --line:#2e3946;
-  --accent:#7fb0e0; --accent-fg:#0d1b2a; --accent-soft:#1f3346; --danger:#f2a39b; color-scheme:dark}}
+  --bg:#1c1815; --panel:#26201c; --fg:#f0e9e4; --muted:#b3a69d; --line:#3d332d;
+  --accent:#e8875c; --accent-fg:#1c1815; --accent-soft:#3a2a22; --danger:#f2a39b; --sub:#8cb6d2; color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#12171d; --panel:#1b222b; --fg:#e4e9ef; --muted:#9aa7b4; --line:#2e3946;
-  --accent:#7fb0e0; --accent-fg:#0d1b2a; --accent-soft:#1f3346; --danger:#f2a39b; color-scheme:dark}
+  --bg:#1c1815; --panel:#26201c; --fg:#f0e9e4; --muted:#b3a69d; --line:#3d332d;
+  --accent:#e8875c; --accent-fg:#1c1815; --accent-soft:#3a2a22; --danger:#f2a39b; --sub:#8cb6d2; color-scheme:dark}
 
 *{box-sizing:border-box}
 [hidden]{display:none!important}
-body{background:var(--bg);color:var(--fg);font-family:var(--ui);font-size:14px;line-height:1.6;
+body{background:var(--bg);color:var(--fg);font-family:var(--ui);font-size:14px;line-height:1.6;letter-spacing:.02em;
   padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
 h1{font-size:22px;margin:0;text-wrap:balance}
-.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;max-width:1280px;margin:0 auto 16px}
+.top{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;max-width:1280px;margin:0 auto 16px;
+  background:var(--accent-soft);border:1px solid var(--line);border-radius:8px;padding:18px 20px}
+.top .eyebrow{color:var(--accent);font-size:12px;font-weight:700;letter-spacing:.14em;margin:0 0 2px}
+h1{font-weight:700}
 .top p{margin:2px 0 0;color:var(--muted);font-size:13px}
 .app{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:20px;max-width:1280px;margin:0 auto;align-items:start}
 @media (max-width:860px){.app{grid-template-columns:minmax(0,1fr)}}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:18px}
 .step{display:flex;flex-direction:column;gap:10px}
 .step h2{font-size:15px;margin:0;display:flex;gap:8px;align-items:center}
 .step h2 span{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-fg);font-size:12px}
@@ -56,8 +60,8 @@ input:focus-visible,textarea:focus-visible,select:focus-visible,button:focus-vis
 .pdlg legend{font-size:12px;color:var(--muted);padding:0 4px}
 .pdlg .acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 a.btn{text-decoration:none;display:inline-block}
-.btn{font:inherit;font-weight:700;border-radius:8px;padding:10px 14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);text-align:center}
-.btn.ghost{background:transparent;color:var(--accent)}
+.btn{font:inherit;font-weight:700;border-radius:6px;padding:10px 14px;cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);text-align:center}
+.btn.ghost{background:var(--panel);color:var(--fg);border-color:var(--fg)}
 .btn.small{padding:4px 8px;font-size:12px;font-weight:500}
 .hint{font-size:12px;color:var(--muted);margin:0}
 .plist{display:flex;flex-direction:column;gap:10px}
@@ -320,8 +324,9 @@ input.inplace{height:auto;min-height:100%}
 
 <header class="top">
   <div>
+    <div class="eyebrow">PHOTO REPORT</div>
     <h1>写真報告書メーカー</h1>
-    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 22</small></p>
+    <p>写真を選んで、テンプレートを選んで、コメントを書くだけ。写真は外部に送信されません。<small id="appVer" style="opacity:.6;margin-left:.5em">版 23</small></p>
   </div>
   <div class="tplsub">
     <a class="btn ghost" id="manualLink" href="manual.html" hidden>使い方</a>
