@@ -148,7 +148,12 @@ footer .wrap{padding-block:24px 32px;display:flex;flex-wrap:wrap;justify-content
 .hero p.bubble.mini{color:var(--fg)}
 .hero .bubble.mini{position:relative;flex:1;min-width:0;max-width:22em;background:var(--card);font-weight:700;font-size:15px}
 .hero .bubble.mini::before{content:"";position:absolute;left:-8px;top:50%;width:14px;height:14px;background:var(--card);border-left:1px solid var(--line);border-bottom:1px solid var(--line);transform:translateY(-50%) rotate(45deg)}
-@media (min-width:760px){.hero .bubble.mini{display:none}}
+@media (min-width:760px){
+  .hero .mrow{position:absolute;right:24px;top:50%;transform:translateY(-50%);flex-direction:column-reverse;gap:14px;width:240px}
+  .hero .mrow .mascot{position:static;transform:none}
+  .hero .bubble.mini{flex:none;max-width:none;width:100%;font-size:14px;line-height:1.7;padding:12px 14px}
+  .hero .bubble.mini::before{left:50%;top:auto;bottom:-8px;transform:translateX(-50%) rotate(-45deg)}
+}
 </style></head><body>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><symbol id="repomaru" viewBox="12 18 222 214"><ellipse cx="120" cy="222" rx="62" ry="8" fill="#1F2A44" opacity="0.08"></ellipse>
